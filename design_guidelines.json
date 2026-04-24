@@ -1,0 +1,92 @@
+{
+  "theme": "light",
+  "archetype": "1_organic_and_earthy",
+  "design_philosophy": "Grounded, tactile, and stress-reducing. A zero-based budgeting app that avoids sterile 'fintech' tropes. Uses earthy tones to make money management feel natural and calm.",
+  "colors": {
+    "background": "#F7F5F0",
+    "surface": "#FFFFFF",
+    "surface_secondary": "#F0EBE1",
+    "text_primary": "#232B25",
+    "text_secondary": "#757971",
+    "border": "#E5E0D8",
+    "semantic": {
+      "positive_income": "#5C8065",
+      "negative_expense": "#C26D5C",
+      "warning": "#D69F4C"
+    },
+    "accounts": {
+      "savings": "#5C8065",
+      "fixed_expenses": "#8D9489",
+      "variable": "#D69F4C",
+      "general": "#9A8C73"
+    },
+    "credit_cards": {
+      "amex": "#4A7485",
+      "mc": "#C86A4C",
+      "visa": "#2B3A4A"
+    }
+  },
+  "typography": {
+    "font_family_headings": "Outfit",
+    "font_family_body": "Manrope",
+    "rules": {
+      "h1": "text-3xl tracking-tight font-bold text-[#232B25]",
+      "h2": "text-2xl tracking-tight font-semibold text-[#232B25]",
+      "h3": "text-xl font-semibold",
+      "body": "text-base font-normal leading-relaxed text-[#232B25]",
+      "numbers": "font-medium tracking-tight",
+      "labels": "text-xs font-bold uppercase tracking-[0.2em] text-[#757971]"
+    }
+  },
+  "layout_spacing": {
+    "screen_padding": "p-6",
+    "card_padding": "p-5",
+    "gap_standard": "gap-4",
+    "border_radius": {
+      "card": "rounded-3xl",
+      "button": "rounded-full",
+      "pill": "rounded-full"
+    }
+  },
+  "components": {
+    "cards": {
+      "style": "bg-white border border-[#E5E0D8] rounded-3xl shadow-[0_4px_20px_rgba(35,43,37,0.03)]",
+      "layout": "flex flex-col gap-3"
+    },
+    "progress_bars": {
+      "style": "h-4 rounded-full bg-[#F0EBE1] overflow-hidden",
+      "fill": "h-full rounded-full"
+    },
+    "fab": {
+      "style": "absolute bottom-6 right-6 w-14 h-14 bg-[#232B25] rounded-full flex items-center justify-center shadow-lg z-50",
+      "icon_color": "#FFFFFF"
+    },
+    "bottom_nav": {
+      "style": "bg-white/90 border-t border-[#E5E0D8] pb-8 pt-4 px-6 flex justify-between items-center"
+    },
+    "alerts": {
+      "negative_balance": "bg-[#C26D5C]/10 border border-[#C26D5C]/30 text-[#C26D5C] p-4 rounded-2xl flex items-center gap-3"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "1px solid crisp borders on all cards to ground them.",
+    "shadows": "Very subtle, diffuse ambient shadows. No harsh drop shadows.",
+    "icons": "Use @expo/vector-icons (Feather). Stroke width 2px. Size 24px standard."
+  },
+  "accessibility_and_testing": {
+    "contrast_ratio": "All text meets APCA/WCAG AA standards against backgrounds.",
+    "test_ids": "All interactive elements MUST include data-testid attribute (e.g., data-testid='fab-add-expense')."
+  },
+  "instructions_to_main_agent": [
+    "Use NativeWind or StyleSheet in React Native Expo to apply these guidelines.",
+    "Load 'Outfit' and 'Manrope' fonts using expo-google-fonts.",
+    "Build a card-based dashboard using the Bento grid approach for mobile.",
+    "Ensure the progress bars clearly show the zero-based budget (Allocated vs Spent) with thick height (h-4).",
+    "Implement a clear visual warning state (using #C26D5C / Terracotta) when an account balance + scheduled CC transfer goes negative.",
+    "Credit Cards should use the specified colors (Amex: Slate Blue, MC: Burnt Orange, Visa: Deep Navy).",
+    "Use @expo/vector-icons/Feather for all iconography.",
+    "Implement the FAB for quick expense entry on the main screens.",
+    "Ensure all interactive elements have data-testid for testing."
+  ],
+  "image_urls": {}
+}
