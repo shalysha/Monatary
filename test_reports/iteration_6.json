@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 6 — His/Hers promoted to first-class bank accounts + dynamic grouping. Added /app/backend/tests/test_iteration6.py with 9 tests across 7 scenarios. ALL 66/66 tests pass (16 iter1 + 14 iter2 + 3 iter3 + 7 iter4 + 17 iter5 + 9 iter6). Verified: (1) GET /api/accounts returns 6 accounts in exact order fixed_expenses, variable, general, his, hers, savings with His Spending/#4A7485 and Hers Spending/#A86B7E; (2) POST /api/seed-budget now returns {fixed_count:14, variable_count:7, his_count:1, hers_count:1}; account targets fixed=3645.96, variable=1550.00, general=0 (no Personal), his=200, hers=200, savings=0; Personal($200) cat lives directly under his and hers (no intermediate group); (3) POST /api/incomes with allocation {his:100, hers:100} persists the new fields and his/hers account balances increase by the exact amounts; DELETE reverses them; (4) POST /api/categories with parent_account='his' propagates monthly_target into his.target (200+50=250); (5) POST /api/categories with parent_id on a previously-leaf category (Groceries $850) converts the parent into a group — variable.target drops by Groceries' own target AND adds only the new leaf (1550-850+300=1000); dashboard marks Groceries is_group=true with rolled-up effective_target=300; deleting the child restores variable.target to 1550; (6) DELETE /api/categories on Utilities group cascades (removes 3 children) and variable.target drops by the sum of children's targets (1550-250=1300); (7) POST /api/rollover with sweep_to_savings=true sweeps all non-savings buckets including his($50)/hers($75) and variable($25) into savings (+$150) and skips the savings bucket itself. Migration verified: existing DBs without his/hers gain them via ensure_seed() on next call. Updated 8 stale assertions across iter1/iter2/iter5 tests (account count 4→6, sorted keys include his/hers, order_idx includes his/hers, general.target 400→0, old Personal-group schema → new Personal-leaf-per-account schema). Product code is correct end-to-end.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/incomes", "issue": "Income.total is computed as fixed_expenses+variable+general+savings only — his and hers contributions are EXCLUDED from total. Balances still update correctly (loop iterates all fields), but persisted Income.total and /api/analytics income aggregation will under-count any his/hers allocation. Suggest: total = sum(alloc.model_dump().values()) or add + alloc.his + alloc.hers."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/backend/tests/test_iteration5.py",
+    "/app/backend/tests/test_iteration4_nested.py",
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_budget_api.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "Fix create_income total calc in server.py line 284: include alloc.his + alloc.hers (or use sum of allocation dict). Without this, the analytics 'income' column will miss any money allocated to his/hers and the Income record's stored total won't match the sum of its allocations."
+  ],
+  "critical_code_review_comments": [
+    "BUG: create_income total = fixed_expenses+variable+general+savings omits his/hers. Balances update via dict loop, so user-visible wallet behavior works, but analytics/history is wrong. Reproducer: POST income his=100,hers=100 → Income.total==0.0 (should be 200).",
+    "AccountKey Literal (line 26) still defines only 4 keys — not used in any endpoint signature so not a runtime issue, but stale. Consider removing or updating to include his/hers for type clarity.",
+    "ensure_seed migration path is additive-only — if a user later removed their his/hers accounts via a future DELETE endpoint, they would re-appear on any call. Acceptable for now.",
+    "_recompute_account_targets now dynamically iterates db.accounts so any user-added account will be zeroed if it has no category targets — safe default.",
+    "rollover correctly skips key=='savings' and sweeps dynamically across all other buckets including his/hers. Uses $set balance=0 then $inc savings — not atomic across two calls, but acceptable for single-user app.",
+    "server.py is now ~913 lines. Refactor into routers (accounts, expenses, categories, upcoming, analytics, rollover) is overdue.",
+    "Minor: seed-budget response shape changed keys (spending_count → his_count/hers_count). If any FE code reads body.spending_count it will now get undefined."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new — 9 tests across 7 classes)",
+    "/app/backend/tests/test_budget_api.py (3 stale-count/order assertions updated: accounts 4→6, sorted keys include his/hers)",
+    "/app/backend/tests/test_iteration2.py (3 assertions updated: cat count 24→23, general.target 400→0, order_idx adds his/hers)",
+    "/app/backend/tests/test_iteration3_fixes.py (1 assertion: cat count 24→23)",
+    "/app/backend/tests/test_iteration4_nested.py (1 assertion: cat count 24→23)",
+    "/app/backend/tests/test_iteration5.py (TestPersonalSeed class rewritten for new iter6 schema: Personal@his + Personal@hers leaves, not a group under general)",
+    "/app/test_reports/iteration_6.json",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "success_rate": {
+    "backend": "100% (66/66 — 9/9 iter6 + 57/57 regression)",
+    "frontend": "not tested — testing_type=backend only"
+  },
+  "seed_data_creation": "Iter6 module fixture resets and re-seeds at start AND end so suite leaves a clean seeded state. Final state: 23 categories (14 fixed + 3 standalone variable + 1 Utilities group + 3 utilities children + 1 Personal@his + 1 Personal@hers); 6 accounts: fixed_expenses target=3645.96, variable target=1550, general target=0, his target=200, hers target=200, savings target=0; balances all zero; no TEST_ artifacts leak.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/ -v. All 66 tests pass. Iter6 specifically: pytest /app/backend/tests/test_iteration6.py -v. Seed totals after /api/seed-budget: fixed=$3645.96, variable=$1550, general=$0, his=$200, hers=$200, savings=$0. Total seeded categories = 23. Accounts = 6 in order: fixed_expenses, variable, general, his, hers, savings. IncomeAllocation now has fields {fixed_expenses, variable, general, his, hers, savings}. ONE MINOR BUG (non-blocking): create_income's total field omits his/hers — balances correct but Income.total and analytics undercount. Frontend (budget.tsx chevron toggle, 'Add Sub' on any cat, add-income.tsx his/hers sliders) was NOT tested per request — main agent should verify UI integration for the two new buckets.",
+  "rca_of_issue": "Minor bug in create_income (server.py L284): total = alloc.fixed_expenses + alloc.variable + alloc.general + alloc.savings — his and hers were added to IncomeAllocation model but the total calc wasn't updated. Fix: total = sum(alloc.model_dump().values()) OR explicitly add + alloc.his + alloc.hers. No impact on account balances (loop at L293 iterates over all alloc fields correctly). Impact on analytics: GET /api/analytics aggregates $total per month — any income with his/hers allocation will report under the true sum in the income column."
+}

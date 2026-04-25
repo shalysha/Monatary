@@ -122,7 +122,7 @@ export default function AddExpense() {
     if (!grouped[c.parent_account]) grouped[c.parent_account] = [];
     grouped[c.parent_account].push(c);
   });
-  const PARENT_ORDER = ["fixed_expenses", "variable", "general", "savings"];
+  const PARENT_ORDER = accounts.length > 0 ? accounts.map((a) => a.key) : ["fixed_expenses", "variable", "general", "his", "hers", "savings"];
 
   return (
     <SafeAreaView style={g.screen} edges={["top", "bottom"]}>

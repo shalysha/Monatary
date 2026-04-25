@@ -26,7 +26,7 @@ class TestInitAndSeed:
         r = client.get(f"{API}/accounts", timeout=10)
         assert r.status_code == 200
         keys = sorted([a["key"] for a in r.json()])
-        assert keys == ["fixed_expenses", "general", "savings", "variable"]
+        assert keys == ["fixed_expenses", "general", "hers", "his", "savings", "variable"]
 
     def test_cards_seeded(self, client):
         r = client.get(f"{API}/cards", timeout=10)
@@ -37,7 +37,7 @@ class TestInitAndSeed:
     def test_init_idempotent(self, client):
         client.post(f"{API}/init", timeout=10)
         r = client.get(f"{API}/accounts", timeout=10)
-        assert len(r.json()) == 4
+        assert len(r.json()) == 6
 
 
 # ---------- Dashboard ----------
@@ -47,7 +47,7 @@ class TestDashboard:
         assert r.status_code == 200
         d = r.json()
         assert "accounts" in d and "cards" in d and "totals" in d
-        assert len(d["accounts"]) == 4 and len(d["cards"]) == 3
+        assert len(d["accounts"]) == 6 and len(d["cards"]) == 3
         for a in d["accounts"]:
             assert "owed_to_cards" in a and "projected_balance" in a and "is_negative_projected" in a
         assert {"total_balance", "total_owed", "total_projected"} <= set(d["totals"].keys())
@@ -196,7 +196,7 @@ class TestReset:
         r = client.post(f"{API}/reset", timeout=15)
         assert r.status_code == 200
         accs = client.get(f"{API}/accounts").json()
-        assert len(accs) == 4
+        assert len(accs) == 6
         for a in accs:
             assert a["balance"] == 0.0
         cards = client.get(f"{API}/cards").json()

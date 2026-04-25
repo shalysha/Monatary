@@ -48,6 +48,8 @@ class IncomeAllocation(BaseModel):
     fixed_expenses: float = 0.0
     variable: float = 0.0
     general: float = 0.0
+    his: float = 0.0
+    hers: float = 0.0
     savings: float = 0.0
 
 
@@ -193,6 +195,8 @@ DEFAULT_ACCOUNTS = [
     {"key": "fixed_expenses", "name": "Fixed Expenses", "color": "#8D9489", "target": 0.0, "balance": 0.0},
     {"key": "variable", "name": "Variable", "color": "#D69F4C", "target": 0.0, "balance": 0.0},
     {"key": "general", "name": "Spending", "color": "#9A8C73", "target": 0.0, "balance": 0.0},
+    {"key": "his", "name": "His Spending", "color": "#4A7485", "target": 0.0, "balance": 0.0},
+    {"key": "hers", "name": "Hers Spending", "color": "#A86B7E", "target": 0.0, "balance": 0.0},
     {"key": "savings", "name": "Savings", "color": "#5C8065", "target": 0.0, "balance": 0.0},
 ]
 DEFAULT_CARDS = [
@@ -208,6 +212,15 @@ async def ensure_seed():
         for a in DEFAULT_ACCOUNTS:
             acc = BankAccount(**a)
             await db.accounts.insert_one(acc.model_dump())
+    else:
+        # Migration: add any missing default accounts (e.g., his/hers added later)
+        existing_keys = set()
+        async for d in db.accounts.find({}, {"_id": 0, "key": 1}):
+            existing_keys.add(d.get("key"))
+        for a in DEFAULT_ACCOUNTS:
+            if a["key"] not in existing_keys:
+                acc = BankAccount(**a)
+                await db.accounts.insert_one(acc.model_dump())
     count_c = await db.cards.count_documents({})
     if count_c == 0:
         for c in DEFAULT_CARDS:
@@ -237,7 +250,7 @@ async def init_data():
 async def get_accounts():
     await ensure_seed()
     docs = await db.accounts.find({}, {"_id": 0}).to_list(100)
-    order = {"fixed_expenses": 0, "variable": 1, "general": 2, "savings": 3}
+    order = {a["key"]: i for i, a in enumerate(DEFAULT_ACCOUNTS)}
     docs.sort(key=lambda d: order.get(d.get("key", ""), 99))
     return [BankAccount(**d) for d in docs]
 
@@ -480,15 +493,18 @@ class RolloverRequest(BaseModel):
 
 @api_router.post("/rollover")
 async def rollover(payload: RolloverRequest):
-    """Sweep leftover positive balance from Fixed/Variable/General into Savings, optionally."""
+    """Sweep leftover positive balance from all non-savings buckets into Savings."""
     swept = {}
     if payload.sweep_to_savings:
-        for key in ["fixed_expenses", "variable", "general"]:
-            doc = await db.accounts.find_one({"key": key}, {"_id": 0})
-            if doc and doc["balance"] > 0:
-                swept[key] = doc["balance"]
+        async for doc in db.accounts.find({}, {"_id": 0}):
+            key = doc.get("key")
+            if key == "savings":
+                continue
+            bal = doc.get("balance", 0.0)
+            if bal > 0:
+                swept[key] = bal
                 await db.accounts.update_one({"key": key}, {"$set": {"balance": 0.0}})
-                await db.accounts.update_one({"key": "savings"}, {"$inc": {"balance": doc["balance"]}})
+                await db.accounts.update_one({"key": "savings"}, {"$inc": {"balance": bal}})
     return {"status": "ok", "swept": swept}
 
 
@@ -545,8 +561,10 @@ async def get_dashboard():
 
     # transfers_by_card[card_key] = { account_key: amount }
     transfers_by_card = {}
-    # owed_by_account[account_key] = total to transfer out across all cards
-    owed_by_account = {"fixed_expenses": 0.0, "variable": 0.0, "general": 0.0, "savings": 0.0}
+    # owed_by_account[account_key] = total to transfer out across all cards (init from accounts list)
+    owed_by_account: dict = {}
+    async for a in db.accounts.find({}, {"_id": 0, "key": 1}):
+        owed_by_account[a["key"]] = 0.0
     for row in agg:
         card_k = row["_id"].get("card")
         acct_k = row["_id"].get("payoff_account")
@@ -571,7 +589,7 @@ async def get_dashboard():
 
     # Build account summary with projected balance after CC transfer
     account_summary = []
-    order = {"fixed_expenses": 0, "variable": 1, "general": 2, "savings": 3}
+    order = {a["key"]: i for i, a in enumerate(DEFAULT_ACCOUNTS)}
     accounts.sort(key=lambda d: order.get(d.get("key", ""), 99))
     for a in accounts:
         owed = owed_by_account.get(a["key"], 0.0)
@@ -667,7 +685,7 @@ async def reset_all():
 @api_router.get("/categories", response_model=List[Category])
 async def list_categories():
     docs = await db.categories.find({}, {"_id": 0}).to_list(500)
-    order = {"fixed_expenses": 0, "variable": 1, "general": 2, "savings": 3}
+    order = {a["key"]: i for i, a in enumerate(DEFAULT_ACCOUNTS)}
     docs.sort(key=lambda d: (order.get(d.get("parent_account", ""), 99), d.get("name", "")))
     return [Category(**d) for d in docs]
 
@@ -708,12 +726,15 @@ async def _recompute_account_targets():
     so we don't double-count when children exist."""
     all_cats = await db.categories.find({}, {"_id": 0}).to_list(2000)
     parent_ids = {c["parent_id"] for c in all_cats if c.get("parent_id")}
-    sums = {"fixed_expenses": 0.0, "variable": 0.0, "general": 0.0, "savings": 0.0}
+    sums: dict = {}
     for c in all_cats:
         if c["id"] in parent_ids:
             continue  # this is a group; skip its own target
-        sums[c["parent_account"]] = sums.get(c["parent_account"], 0.0) + (c.get("monthly_target") or 0.0)
-    for key in ["fixed_expenses", "variable", "general", "savings"]:
+        k = c["parent_account"]
+        sums[k] = sums.get(k, 0.0) + (c.get("monthly_target") or 0.0)
+    # Update target for every existing account
+    async for acc in db.accounts.find({}, {"_id": 0, "key": 1}):
+        key = acc["key"]
         await db.accounts.update_one({"key": key}, {"$set": {"target": sums.get(key, 0.0)}})
 
 
@@ -856,22 +877,14 @@ async def seed_user_budget():
         )
         await db.categories.insert_one(sub.model_dump())
 
-    # Personal Spending group under Spending (general) bucket: His + Hers $200 each
-    personal = Category(name="Personal", parent_account="general", monthly_target=0.0, auto_create=False)
-    await db.categories.insert_one(personal.model_dump())
-    personal_subs = [("His Spending", 200.00), ("Hers Spending", 200.00)]
-    for name, target in personal_subs:
-        sub = Category(
-            name=name,
-            parent_account="general",
-            parent_id=personal.id,
-            monthly_target=target,
-            auto_create=False,
-        )
-        await db.categories.insert_one(sub.model_dump())
+    # Personal Spending sub-buckets are now their own bank accounts (his / hers)
+    his_cat = Category(name="Personal", parent_account="his", monthly_target=200.00, auto_create=False)
+    await db.categories.insert_one(his_cat.model_dump())
+    hers_cat = Category(name="Personal", parent_account="hers", monthly_target=200.00, auto_create=False)
+    await db.categories.insert_one(hers_cat.model_dump())
 
     await _recompute_account_targets()
-    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items) + 1 + len(sub_items), "spending_count": 1 + len(personal_subs)}
+    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items) + 1 + len(sub_items), "his_count": 1, "hers_count": 1}
 
 
 app.include_router(api_router)

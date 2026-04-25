@@ -15,6 +15,8 @@ export const COLORS = {
     fixed_expenses: "#8D9489",
     variable: "#D69F4C",
     general: "#9A8C73",
+    his: "#4A7485",
+    hers: "#A86B7E",
   } as Record<string, string>,
   cards: {
     amex: "#4A7485",
@@ -41,6 +43,8 @@ export const ACCOUNT_LABELS: Record<string, string> = {
   fixed_expenses: "Fixed Expenses",
   variable: "Variable",
   general: "Spending",
+  his: "His Spending",
+  hers: "Hers Spending",
   savings: "Savings",
 };
 

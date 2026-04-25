@@ -23,38 +23,26 @@ export default function AddIncome() {
   const [source, setSource] = useState("Paycheck");
   const [total, setTotal] = useState("");
   const [mode, setMode] = useState<Mode>("amount");
-  const [values, setValues] = useState<Record<string, string>>({
-    fixed_expenses: "",
-    variable: "",
-    general: "",
-    savings: "",
-  });
+  const [values, setValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    api.accounts().then(setAccounts);
+    api.accounts().then((a) => {
+      setAccounts(a);
+      const init: Record<string, string> = {};
+      a.forEach((acc) => (init[acc.key] = ""));
+      setValues(init);
+    });
   }, []);
 
   const totalNum = parseFloat(total || "0");
-  const allocations = (() => {
-    if (mode === "amount") {
-      return {
-        fixed_expenses: parseFloat(values.fixed_expenses || "0"),
-        variable: parseFloat(values.variable || "0"),
-        general: parseFloat(values.general || "0"),
-        savings: parseFloat(values.savings || "0"),
-      };
-    } else {
-      return {
-        fixed_expenses: (totalNum * (parseFloat(values.fixed_expenses || "0") / 100)) || 0,
-        variable: (totalNum * (parseFloat(values.variable || "0") / 100)) || 0,
-        general: (totalNum * (parseFloat(values.general || "0") / 100)) || 0,
-        savings: (totalNum * (parseFloat(values.savings || "0") / 100)) || 0,
-      };
-    }
-  })();
+  const allocations: Record<string, number> = {};
+  accounts.forEach((a) => {
+    const raw = parseFloat(values[a.key] || "0");
+    allocations[a.key] = mode === "amount" ? raw : (totalNum * raw) / 100 || 0;
+  });
 
-  const allocSum = allocations.fixed_expenses + allocations.variable + allocations.general + allocations.savings;
-  const remaining = (mode === "amount" ? totalNum : totalNum) - allocSum;
+  const allocSum = Object.values(allocations).reduce((s, v) => s + v, 0);
+  const remaining = totalNum - allocSum;
 
   const submit = async () => {
     if (allocSum <= 0) {

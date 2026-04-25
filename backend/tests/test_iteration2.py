@@ -32,8 +32,8 @@ class TestSeedBudget:
         r2 = client.post(f"{API}/seed-budget", timeout=15)
         assert r2.status_code == 200
         cats = client.get(f"{API}/categories", timeout=10).json()
-        # iter5: +1 Personal group + 2 sub-categories (His/Hers Spending) = 24
-        assert len(cats) == 24
+        # iter6: Personal is now under his/hers accounts (not general). 14 fixed + 3 var + 1 util group + 3 util subs + 1 Personal@his + 1 Personal@hers = 23
+        assert len(cats) == 23
 
     def test_seed_budget_targets(self, client):
         cats = client.get(f"{API}/categories", timeout=10).json()
@@ -54,7 +54,8 @@ class TestSeedBudget:
         assert round(accts["fixed_expenses"]["target"], 2) == 3645.96
         assert round(accts["variable"]["target"], 2) == 1550.00  # iter4: leaves only (Utilities is now a group)
         # iter5: Personal group with His($200) + Hers($200) → general.target = 400
-        assert round(accts["general"]["target"], 2) == 400.00
+        # iter6: Personal moved to his/hers accounts → general.target = 0
+        assert round(accts["general"]["target"], 2) == 0.00
         assert accts["savings"]["target"] == 0.0
 
 
@@ -68,7 +69,7 @@ class TestCategoriesCRUD:
             if not parents_seen or parents_seen[-1] != c["parent_account"]:
                 parents_seen.append(c["parent_account"])
         # Order should respect: fixed_expenses, variable, general, savings
-        order_idx = {"fixed_expenses": 0, "variable": 1, "general": 2, "savings": 3}
+        order_idx = {"fixed_expenses": 0, "variable": 1, "general": 2, "his": 3, "hers": 4, "savings": 5}
         sorted_seen = sorted(parents_seen, key=lambda k: order_idx[k])
         assert parents_seen == sorted_seen
 

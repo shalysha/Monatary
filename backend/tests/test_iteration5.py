@@ -37,32 +37,26 @@ def _by_name(items, name):
     return next((x for x in items if x["name"] == name), None)
 
 
-# ---------- Test 1: Personal sub-categories seeded under 'general' ----------
+# ---------- Test 1: Personal categories seeded under 'his' and 'hers' accounts (iter6) ----------
 class TestPersonalSeed:
-    def test_personal_group_and_children_exist(self, client):
+    def test_personal_his_and_hers_exist(self, client):
         cats = client.get(f"{API}/categories").json()
-        personal = _by_name(cats, "Personal")
-        assert personal is not None, "Personal group not seeded"
-        assert personal["parent_account"] == "general"
-        assert personal["monthly_target"] == 0.0
-        assert personal.get("parent_id") in (None, "")
+        his_personals = [c for c in cats if c["name"] == "Personal" and c["parent_account"] == "his"]
+        hers_personals = [c for c in cats if c["name"] == "Personal" and c["parent_account"] == "hers"]
+        assert len(his_personals) == 1, "Personal@his not seeded"
+        assert len(hers_personals) == 1, "Personal@hers not seeded"
+        assert his_personals[0]["monthly_target"] == 200.0
+        assert hers_personals[0]["monthly_target"] == 200.0
+        # No longer nested under a 'Personal' group in general
+        assert his_personals[0].get("parent_id") in (None, "")
+        assert hers_personals[0].get("parent_id") in (None, "")
 
-        his = _by_name(cats, "His Spending")
-        hers = _by_name(cats, "Hers Spending")
-        assert his and hers, "His/Hers Spending not seeded"
-        assert his["parent_id"] == personal["id"]
-        assert hers["parent_id"] == personal["id"]
-        assert his["parent_account"] == "general"
-        assert hers["parent_account"] == "general"
-        assert his["monthly_target"] == 200.0
-        assert hers["monthly_target"] == 200.0
-
-    def test_general_account_target_is_400(self, client):
+    def test_account_targets_iter6(self, client):
         accts = {a["key"]: a for a in client.get(f"{API}/accounts").json()}
-        # Sum of LEAVES under general = His(200) + Hers(200) = 400 (group itself excluded)
-        assert round(accts["general"]["target"], 2) == 400.00, (
-            f"general.target expected 400.00, got {accts['general']['target']}"
-        )
+        # iter6: Personal moved out of general into his/hers
+        assert round(accts["general"]["target"], 2) == 0.00
+        assert round(accts["his"]["target"], 2) == 200.00
+        assert round(accts["hers"]["target"], 2) == 200.00
         # Other targets unchanged
         assert round(accts["fixed_expenses"]["target"], 2) == 3645.96
         assert round(accts["variable"]["target"], 2) == 1550.00
@@ -73,16 +67,16 @@ class TestPersonalSeed:
         body = r.json()
         assert body["fixed_count"] == 14
         assert body["variable_count"] == 7
-        assert body["spending_count"] == 3  # Personal group + 2 children
+        # iter6: keys changed from spending_count to his_count/hers_count
+        assert body.get("his_count") == 1
+        assert body.get("hers_count") == 1
 
-    def test_dashboard_personal_is_group(self, client):
+    def test_dashboard_personal_is_leaf(self, client):
         d = client.get(f"{API}/dashboard").json()
-        personal = _by_name(d["categories"], "Personal")
-        his = _by_name(d["categories"], "His Spending")
-        assert personal["is_group"] is True
-        assert round(personal["effective_target"], 2) == 400.00
-        assert his["is_group"] is False
-        assert round(his["effective_target"], 2) == 200.00
+        his_personal = next((c for c in d["categories"] if c["name"] == "Personal" and c["parent_account"] == "his"), None)
+        assert his_personal is not None
+        assert his_personal["is_group"] is False
+        assert round(his_personal["effective_target"], 2) == 200.00
 
 
 # ---------- Test 2: Analytics period selector ----------

@@ -17,23 +17,39 @@ import { useFocusEffect } from "expo-router";
 import { api, Category } from "../../api";
 import { COLORS, FONTS, formatCAD, ACCOUNT_LABELS, styles as g } from "../../theme";
 
-const PARENT_ORDER = ["fixed_expenses", "variable", "general", "savings"];
+const FALLBACK_PARENT_ORDER = ["fixed_expenses", "variable", "general", "his", "hers", "savings"];
+
+const pillStyle = (border: string, filled = false) => ({
+  paddingVertical: 6,
+  paddingHorizontal: 10,
+  borderRadius: 999,
+  borderWidth: filled ? 0 : 1,
+  borderColor: border,
+  backgroundColor: filled ? border : "transparent",
+  flexDirection: "row" as const,
+  alignItems: "center" as const,
+  gap: 5,
+});
+const pillText = { color: COLORS.textPrimary, fontFamily: FONTS.bodyMed, fontSize: 10 };
+const pillTextLight = { color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 10 };
 
 export default function BudgetScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<{ key: string; name: string; color: string }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [adding, setAdding] = useState<string | null>(null); // parent_account
   const [addingSubTo, setAddingSubTo] = useState<Category | null>(null); // parent category for sub
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [draftName, setDraftName] = useState("");
   const [draftAmount, setDraftAmount] = useState("");
   const [draftAuto, setDraftAuto] = useState(false);
 
   const load = async () => {
     try {
-      // Use dashboard to get categories with spent_this_month
       const d = await api.dashboard();
       setCategories(d.categories || []);
+      setAccounts(d.accounts.map((a) => ({ key: a.key, name: a.name, color: a.color })));
     } catch (e) {
       console.warn(e);
     }
@@ -163,6 +179,20 @@ export default function BudgetScreen() {
     );
   };
 
+  // Derive PARENT_ORDER and PARENT_COLORS from accounts (dynamic — supports any number of buckets)
+  const PARENT_ORDER = accounts.length > 0 ? accounts.map((a) => a.key) : FALLBACK_PARENT_ORDER;
+  const PARENT_COLORS: Record<string, string> = {};
+  accounts.forEach((a) => (PARENT_COLORS[a.key] = a.color));
+  // Fallback colors from theme
+  PARENT_ORDER.forEach((k) => {
+    if (!PARENT_COLORS[k]) PARENT_COLORS[k] = COLORS.accounts[k] || COLORS.textSecondary;
+  });
+
+  const accountLabel = (key: string) => {
+    const a = accounts.find((x) => x.key === key);
+    return a ? a.name : ACCOUNT_LABELS[key] || key;
+  };
+
   // Group by parent_account, then build tree by parent_id
   const byParent: Record<string, Category[]> = {};
   PARENT_ORDER.forEach((p) => (byParent[p] = []));
@@ -185,11 +215,30 @@ export default function BudgetScreen() {
     const ordered: Category[] = [];
     roots.forEach((r) => {
       ordered.push(r);
-      (childrenByParent[r.id] || []).forEach((ch) => ordered.push(ch));
+      // skip children if collapsed
+      if (!collapsed.has(r.id)) {
+        (childrenByParent[r.id] || []).forEach((ch) => ordered.push(ch));
+      }
     });
     renderOrder[parentKey] = ordered;
   });
   const grouped = renderOrder;
+
+  // Identify which categories actually have children (for is_group rendering)
+  const allCatsByParent: Record<string, Category[]> = {};
+  categories.forEach((c) => {
+    if (c.parent_id) {
+      (allCatsByParent[c.parent_id] = allCatsByParent[c.parent_id] || []).push(c);
+    }
+  });
+  const hasChildren = (catId: string) => !!allCatsByParent[catId]?.length;
+
+  const toggleCollapse = (catId: string) => {
+    const next = new Set(collapsed);
+    if (next.has(catId)) next.delete(catId);
+    else next.add(catId);
+    setCollapsed(next);
+  };
 
   const totalsByParent: Record<string, { target: number; spent: number }> = {};
   PARENT_ORDER.forEach((p) => {
@@ -206,13 +255,6 @@ export default function BudgetScreen() {
     totalsByParent[p] = { target, spent };
   });
   const grandTarget = Object.values(totalsByParent).reduce((s, v) => s + v.target, 0);
-
-  const PARENT_COLORS: Record<string, string> = {
-    fixed_expenses: COLORS.accounts.fixed_expenses,
-    variable: COLORS.accounts.variable,
-    general: COLORS.accounts.general,
-    savings: COLORS.accounts.savings,
-  };
 
   const hasAny = categories.length > 0;
 
@@ -271,7 +313,7 @@ export default function BudgetScreen() {
                     marginRight: 10,
                   }}
                 />
-                <Text style={[g.h2, { flex: 1 }]}>{ACCOUNT_LABELS[parent]}</Text>
+                <Text style={[g.h2, { flex: 1 }]}>{accountLabel(parent)}</Text>
                 <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 16, color: COLORS.textPrimary }}>
                   {formatCAD(tot.spent)} / {formatCAD(tot.target)}
                 </Text>
@@ -299,8 +341,9 @@ export default function BudgetScreen() {
 
               {items.map((c) => {
                 const isChild = !!c.parent_id;
-                const isGroup = c.is_group || items.some((x) => x.parent_id === c.id);
-                const target = c.effective_target ?? c.monthly_target;
+                const isGroup = hasChildren(c.id);
+                const isCollapsed = collapsed.has(c.id);
+                const target = isGroup ? (c.effective_target ?? c.monthly_target) : c.monthly_target;
                 const cpct =
                   target > 0 ? Math.min(100, ((c.spent_this_month || 0) / target) * 100) : 0;
                 const over = c.over_budget;
@@ -308,7 +351,8 @@ export default function BudgetScreen() {
                   <TouchableOpacity
                     key={c.id}
                     testID={`category-${c.id}`}
-                    onPress={() => startEdit(c)}
+                    onPress={() => (isGroup ? toggleCollapse(c.id) : startEdit(c))}
+                    onLongPress={() => startEdit(c)}
                     style={[
                       g.card,
                       {
@@ -322,6 +366,20 @@ export default function BudgetScreen() {
                     <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
                       {isChild && (
                         <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginRight: 6 }}>└</Text>
+                      )}
+                      {isGroup && (
+                        <TouchableOpacity
+                          testID={`toggle-${c.id}`}
+                          onPress={() => toggleCollapse(c.id)}
+                          hitSlop={8}
+                          style={{ marginRight: 6 }}
+                        >
+                          <Feather
+                            name={isCollapsed ? "chevron-right" : "chevron-down"}
+                            size={16}
+                            color={COLORS.textSecondary}
+                          />
+                        </TouchableOpacity>
                       )}
                       <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <Text
@@ -397,87 +455,42 @@ export default function BudgetScreen() {
                       />
                     </View>
 
-                    {!isGroup && (
-                      <View style={{ flexDirection: "row", marginTop: 8, gap: 6 }}>
-                        {c.auto_create && (
-                          <TouchableOpacity
-                            testID={`run-${c.id}`}
-                            onPress={() => runCat(c)}
-                            style={{
-                              paddingVertical: 6,
-                              paddingHorizontal: 10,
-                              borderRadius: 999,
-                              backgroundColor: COLORS.textPrimary,
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 5,
-                            }}
-                          >
-                            <Feather name="zap" color="#fff" size={10} />
-                            <Text style={{ color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 10 }}>Log Now</Text>
-                          </TouchableOpacity>
-                        )}
+                    <View style={{ flexDirection: "row", marginTop: 8, gap: 6, flexWrap: "wrap" }}>
+                      {!isGroup && c.auto_create && (
                         <TouchableOpacity
-                          testID={`delete-${c.id}`}
-                          onPress={() => deleteCat(c)}
-                          style={{
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 999,
-                            borderWidth: 1,
-                            borderColor: COLORS.border,
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 5,
-                          }}
+                          testID={`run-${c.id}`}
+                          onPress={() => runCat(c)}
+                          style={pillStyle(COLORS.textPrimary, true)}
                         >
-                          <Feather name="trash-2" color={COLORS.textSecondary} size={10} />
-                          <Text style={{ color: COLORS.textSecondary, fontFamily: FONTS.bodyMed, fontSize: 10 }}>
-                            Delete
-                          </Text>
+                          <Feather name="zap" color="#fff" size={10} />
+                          <Text style={pillTextLight}>Log Now</Text>
                         </TouchableOpacity>
-                      </View>
-                    )}
-
-                    {isGroup && (
-                      <View style={{ flexDirection: "row", marginTop: 8, gap: 6 }}>
-                        <TouchableOpacity
-                          testID={`add-sub-${c.id}`}
-                          onPress={() => startAddSub(c)}
-                          style={{
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 999,
-                            backgroundColor: COLORS.textPrimary,
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 5,
-                          }}
-                        >
-                          <Feather name="plus" color="#fff" size={10} />
-                          <Text style={{ color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 10 }}>Add Sub</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          testID={`delete-${c.id}`}
-                          onPress={() => deleteCat(c)}
-                          style={{
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 999,
-                            borderWidth: 1,
-                            borderColor: COLORS.border,
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 5,
-                          }}
-                        >
-                          <Feather name="trash-2" color={COLORS.textSecondary} size={10} />
-                          <Text style={{ color: COLORS.textSecondary, fontFamily: FONTS.bodyMed, fontSize: 10 }}>
-                            Delete Group
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    )}
+                      )}
+                      <TouchableOpacity
+                        testID={`add-sub-${c.id}`}
+                        onPress={() => startAddSub(c)}
+                        style={pillStyle(COLORS.border)}
+                      >
+                        <Feather name="plus" color={COLORS.textPrimary} size={10} />
+                        <Text style={pillText}>Add Sub</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID={`edit-${c.id}`}
+                        onPress={() => startEdit(c)}
+                        style={pillStyle(COLORS.border)}
+                      >
+                        <Feather name="edit-2" color={COLORS.textPrimary} size={10} />
+                        <Text style={pillText}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        testID={`delete-${c.id}`}
+                        onPress={() => deleteCat(c)}
+                        style={pillStyle(COLORS.border)}
+                      >
+                        <Feather name="trash-2" color={COLORS.textSecondary} size={10} />
+                        <Text style={pillText}>{isGroup ? "Delete Group" : "Delete"}</Text>
+                      </TouchableOpacity>
+                    </View>
                   </TouchableOpacity>
                 );
               })}

@@ -14,14 +14,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { api, UpcomingExpense } from "../api";
+import { api, UpcomingExpense, Account } from "../api";
 import { COLORS, FONTS, formatCAD, ACCOUNT_LABELS, styles as g } from "../theme";
-
-const ACCOUNTS = ["fixed_expenses", "variable", "general", "savings"];
 
 export default function UpcomingScreen() {
   const router = useRouter();
   const [items, setItems] = useState<UpcomingExpense[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<UpcomingExpense | null>(null);
   const [adding, setAdding] = useState(false);
@@ -32,8 +31,9 @@ export default function UpcomingScreen() {
   const [draftNotes, setDraftNotes] = useState("");
 
   const load = async () => {
-    const all = await api.upcoming();
+    const [all, accs] = await Promise.all([api.upcoming(), api.accounts()]);
     setItems(all);
+    setAccounts(accs);
   };
 
   useEffect(() => {
@@ -364,18 +364,18 @@ export default function UpcomingScreen() {
             />
             <Text style={g.label}>Funded From</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 8, marginBottom: 14 }}>
-              {ACCOUNTS.map((a) => (
+              {accounts.map((a) => (
                 <TouchableOpacity
-                  key={a}
-                  testID={`up-acc-${a}`}
-                  onPress={() => setDraftAccount(a)}
+                  key={a.key}
+                  testID={`up-acc-${a.key}`}
+                  onPress={() => setDraftAccount(a.key)}
                   style={{
                     paddingVertical: 9,
                     paddingHorizontal: 13,
                     borderRadius: 999,
                     borderWidth: 1,
-                    borderColor: draftAccount === a ? COLORS.textPrimary : COLORS.border,
-                    backgroundColor: draftAccount === a ? COLORS.textPrimary : "transparent",
+                    borderColor: draftAccount === a.key ? COLORS.textPrimary : COLORS.border,
+                    backgroundColor: draftAccount === a.key ? COLORS.textPrimary : "transparent",
                     marginRight: 6,
                     marginBottom: 6,
                   }}
@@ -384,10 +384,10 @@ export default function UpcomingScreen() {
                     style={{
                       fontFamily: FONTS.bodyMed,
                       fontSize: 12,
-                      color: draftAccount === a ? "#fff" : COLORS.textPrimary,
+                      color: draftAccount === a.key ? "#fff" : COLORS.textPrimary,
                     }}
                   >
-                    {ACCOUNT_LABELS[a]}
+                    {a.name}
                   </Text>
                 </TouchableOpacity>
               ))}
