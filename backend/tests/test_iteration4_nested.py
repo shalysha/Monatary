@@ -42,8 +42,8 @@ def _by_name(cats, name):
 class TestSeedNestedStructure:
     def test_seed_creates_utilities_group_and_children(self, client):
         cats = client.get(f"{API}/categories").json()
-        # 14 fixed + 3 standalone variable + 1 group + 3 children = 21
-        assert len(cats) == 21, f"expected 21 categories, got {len(cats)}"
+        # 14 fixed + 3 standalone variable + 1 group + 3 children + 1 Personal group + 2 personal children = 24
+        assert len(cats) == 24, f"expected 24 categories, got {len(cats)}"
 
         utilities = _by_name(cats, "Utilities")
         assert utilities is not None, "Utilities group not seeded"

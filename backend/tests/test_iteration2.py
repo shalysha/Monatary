@@ -32,7 +32,8 @@ class TestSeedBudget:
         r2 = client.post(f"{API}/seed-budget", timeout=15)
         assert r2.status_code == 200
         cats = client.get(f"{API}/categories", timeout=10).json()
-        assert len(cats) == 21
+        # iter5: +1 Personal group + 2 sub-categories (His/Hers Spending) = 24
+        assert len(cats) == 24
 
     def test_seed_budget_targets(self, client):
         cats = client.get(f"{API}/categories", timeout=10).json()
@@ -52,7 +53,8 @@ class TestSeedBudget:
         accts = {a["key"]: a for a in client.get(f"{API}/accounts").json()}
         assert round(accts["fixed_expenses"]["target"], 2) == 3645.96
         assert round(accts["variable"]["target"], 2) == 1550.00  # iter4: leaves only (Utilities is now a group)
-        assert accts["general"]["target"] == 0.0
+        # iter5: Personal group with His($200) + Hers($200) → general.target = 400
+        assert round(accts["general"]["target"], 2) == 400.00
         assert accts["savings"]["target"] == 0.0
 
 

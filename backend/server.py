@@ -128,7 +128,40 @@ class Category(BaseModel):
     auto_create: bool = False  # if true, becomes a recurring monthly expense
     day_of_month: int = 1
     last_run_month: Optional[str] = None
+    skipped_months: List[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class UpcomingExpense(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    amount: float
+    due_date: str  # YYYY-MM-DD
+    parent_account: Optional[str] = None  # which bucket should fund it
+    notes: Optional[str] = None
+    realized: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class UpcomingCreate(BaseModel):
+    name: str
+    amount: float
+    due_date: str
+    parent_account: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class UpcomingUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    due_date: Optional[str] = None
+    parent_account: Optional[str] = None
+    notes: Optional[str] = None
+    realized: Optional[bool] = None
+
+
+class SkipRequest(BaseModel):
+    month: str  # YYYY-MM
 
 
 class CategoryCreate(BaseModel):
@@ -376,9 +409,20 @@ async def run_recurring(rec_id: str):
 
 # ---------- Analytics ----------
 @api_router.get("/analytics")
-async def analytics(months: int = 6):
-    """Returns per-month totals for income, expenses, and per-account spend."""
+async def analytics(months: int = 6, period: Optional[str] = None):
+    """Returns per-month totals for income, expenses, and per-account spend.
+    period overrides months: '3m', '6m', '12m', 'ytd'."""
     today = datetime.now(timezone.utc)
+    if period == "ytd":
+        months = today.month  # Jan..current month
+    elif period == "3m":
+        months = 3
+    elif period == "6m":
+        months = 6
+    elif period == "12m":
+        months = 12
+    months = max(1, min(months, 24))
+
     results = []
     for i in range(months):
         # compute month YYYY-MM going back i months
@@ -680,6 +724,10 @@ async def run_category(cat_id: str):
     cat = await db.categories.find_one({"id": cat_id}, {"_id": 0})
     if not cat:
         raise HTTPException(404, "Not found")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    skipped = cat.get("skipped_months") or []
+    if month in skipped:
+        raise HTTPException(400, "This category is skipped for the current month")
     parent = cat["parent_account"]
     payload = ExpenseCreate(
         description=cat["name"],
@@ -690,9 +738,73 @@ async def run_category(cat_id: str):
         source_account=parent,
     )
     expense = await create_expense(payload)
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
     await db.categories.update_one({"id": cat_id}, {"$set": {"last_run_month": month}})
     return {"status": "ok", "expense_id": expense.id}
+
+
+@api_router.post("/categories/{cat_id}/skip")
+async def skip_category(cat_id: str, payload: SkipRequest):
+    """Mark a category as skipped for a given month (won't auto-run, hidden from 'pending' list)."""
+    await db.categories.update_one({"id": cat_id}, {"$addToSet": {"skipped_months": payload.month}})
+    return {"status": "ok"}
+
+
+@api_router.post("/categories/{cat_id}/unskip")
+async def unskip_category(cat_id: str, payload: SkipRequest):
+    await db.categories.update_one({"id": cat_id}, {"$pull": {"skipped_months": payload.month}})
+    return {"status": "ok"}
+
+
+# ---------- Upcoming irregular expenses ----------
+@api_router.get("/upcoming", response_model=List[UpcomingExpense])
+async def list_upcoming():
+    docs = await db.upcoming.find({}, {"_id": 0}).sort("due_date", 1).to_list(500)
+    return [UpcomingExpense(**d) for d in docs]
+
+
+@api_router.post("/upcoming", response_model=UpcomingExpense)
+async def create_upcoming(payload: UpcomingCreate):
+    item = UpcomingExpense(**payload.model_dump())
+    await db.upcoming.insert_one(item.model_dump())
+    return item
+
+
+@api_router.put("/upcoming/{up_id}", response_model=UpcomingExpense)
+async def update_upcoming(up_id: str, payload: UpcomingUpdate):
+    fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "No fields")
+    await db.upcoming.update_one({"id": up_id}, {"$set": fields})
+    doc = await db.upcoming.find_one({"id": up_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    return UpcomingExpense(**doc)
+
+
+@api_router.delete("/upcoming/{up_id}")
+async def delete_upcoming(up_id: str):
+    await db.upcoming.delete_one({"id": up_id})
+    return {"status": "deleted"}
+
+
+@api_router.post("/upcoming/{up_id}/realize")
+async def realize_upcoming(up_id: str):
+    """Convert an upcoming expense into an actual cash expense from its parent_account."""
+    doc = await db.upcoming.find_one({"id": up_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    if not doc.get("parent_account"):
+        raise HTTPException(400, "parent_account required to realize upcoming expense")
+    payload = ExpenseCreate(
+        description=doc["name"],
+        amount=doc["amount"],
+        date=doc.get("due_date"),
+        payment_method="cash",
+        source_account=doc["parent_account"],
+    )
+    exp = await create_expense(payload)
+    await db.upcoming.update_one({"id": up_id}, {"$set": {"realized": True}})
+    return {"status": "ok", "expense_id": exp.id}
 
 
 # ---------- User Budget Seeding (idempotent: replaces existing categories) ----------
@@ -742,8 +854,22 @@ async def seed_user_budget():
         )
         await db.categories.insert_one(sub.model_dump())
 
+    # Personal Spending group under Spending (general) bucket: His + Hers $200 each
+    personal = Category(name="Personal", parent_account="general", monthly_target=0.0, auto_create=False)
+    await db.categories.insert_one(personal.model_dump())
+    personal_subs = [("His Spending", 200.00), ("Hers Spending", 200.00)]
+    for name, target in personal_subs:
+        sub = Category(
+            name=name,
+            parent_account="general",
+            parent_id=personal.id,
+            monthly_target=target,
+            auto_create=False,
+        )
+        await db.categories.insert_one(sub.model_dump())
+
     await _recompute_account_targets()
-    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items) + 1 + len(sub_items)}
+    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items) + 1 + len(sub_items), "spending_count": 1 + len(personal_subs)}
 
 
 app.include_router(api_router)

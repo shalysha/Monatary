@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 5 — Period selector for analytics, skip/unskip recurring, upcoming-expenses CRUD+realize, and Personal sub-categories under Spending bucket. Added /app/backend/tests/test_iteration5.py with 17 tests across 5 scenarios. ALL 57/57 tests pass (16 iter1 + 14 iter2 + 3 iter3 + 7 iter4 + 17 iter5). Verified: (1) GET /api/analytics?period=3m|6m|12m|ytd returns correct months counts; ytd uses current month number with first/last month spans Jan→current; ?months=N still respected when no period; (2) POST /api/categories/{id}/skip is idempotent via $addToSet (calling twice yields one entry); (3) /run on a category whose current month is in skipped_months returns 400; (4) /unskip removes via $pull; (5) Upcoming CRUD: POST creates with all fields, GET sorted by due_date asc, PUT updates fields with persistence, DELETE removes; (6) /upcoming/{id}/realize creates a cash expense from parent_account, debits the bucket balance, sets realized=true, returns 400 when parent_account is null; (7) Seed-budget creates Personal group ($0) under general bucket with His Spending ($200) + Hers Spending ($200) children; account 'general'.target = 400.00 (sum of just the 2 leaves; group excluded); fixed=$3645.96, variable=$1550 unchanged. Dashboard marks Personal as is_group=true with effective_target=400. Updated 3 stale assertions in iter2/iter3/iter4 (len(cats) 21→24, general.target 0→400) to reflect the new Personal seed structure — test-data maintenance only, no code change.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/backend/tests/test_iteration4_nested.py",
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_budget_api.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "analytics(): period param correctly maps 3m/6m/12m/ytd; ytd uses today.month (Jan→1, Feb→2, etc.) per the spec. Clean precedence — period overrides months if both passed.",
+    "/categories/{id}/skip uses $addToSet ensuring idempotency without duplicates; /unskip uses $pull. Both return generic {status: 'ok'} — could return updated category for client convenience but not required.",
+    "/upcoming/{id}/realize correctly checks parent_account presence before going through create_expense (cash payment from parent_account). Sets realized=true after expense creation; uses upcoming.due_date as expense date so analytics group correctly by month.",
+    "Note (carry-over): /upcoming/{id}/realize is not idempotent — calling realize twice on same upcoming will create two expenses (only second sets realized=true again). Consider 400 if already realized.",
+    "Note (carry-over): /categories/{id}/run still has no idempotency guard for last_run_month (a user can run the same category multiple times in one month).",
+    "server.py is now ~895 lines. Refactor into routers (accounts, expenses, categories, upcoming, analytics) is increasingly warranted.",
+    "UpcomingCreate accepts due_date as a free-form string — no YYYY-MM-DD validation. A typo like 'tomorrow' would persist and break sort + realize."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (new — 17 tests across 5 classes)",
+    "/app/backend/tests/test_iteration2.py (2 stale-count assertions updated: len(cats) 21→24, general.target 0→400)",
+    "/app/backend/tests/test_iteration3_fixes.py (1 stale-count assertion updated: 21→24)",
+    "/app/backend/tests/test_iteration4_nested.py (1 stale-count assertion updated: 21→24)",
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "success_rate": {
+    "backend": "100% (57/57 — 17/17 iter5 + 40/40 regression)",
+    "frontend": "not tested — testing_type=backend only"
+  },
+  "seed_data_creation": "Iter5 module fixture resets and re-seeds at start AND end so the suite leaves a clean seeded state. Final state: 24 categories (14 fixed + 3 standalone variable + 1 Utilities group + 3 utilities children + 1 Personal group + 2 personal children); accounts: fixed_expenses target=3645.96, variable target=1550, general target=400, savings=0; balances all zero; no TEST_ artifacts leak.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/ -v. All 57 tests pass. Iter5 specifically: pytest /app/backend/tests/test_iteration5.py -v. Seed totals after /api/seed-budget: fixed=$3645.96, variable=$1550, general=$400 (Personal group with His+Hers $200 each), savings=$0. Total seeded categories = 24. New endpoints to be aware of: GET /api/analytics?period=3m|6m|12m|ytd; POST /api/categories/{id}/skip & /unskip with {month}; full CRUD on /api/upcoming + /api/upcoming/{id}/realize. Frontend (analytics screen, upcoming screen, skip toggles in budget UI) was NOT tested per request — main agent should verify UI integrations.",
+  "rca_of_issue": "N/A — no bugs. Three test assertions (in iter2/3/4) hardcoded the pre-iter5 seed counts (21 categories, general.target=0) and were refreshed to match the new Personal sub-category seed (24 categories, general.target=400). Product code is correct."
+}

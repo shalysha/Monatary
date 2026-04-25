@@ -2,27 +2,29 @@ import { useState, useCallback } from "react";
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
-import { api, Account, AnalyticsMonth } from "../../api";
+import { useFocusEffect, useRouter } from "expo-router";
+import { api, Account, AnalyticsMonth, UpcomingExpense } from "../../api";
 import { COLORS, FONTS, formatCAD, ACCOUNT_LABELS, styles as g } from "../../theme";
 
+type Period = "3m" | "6m" | "12m" | "ytd";
+
 export default function SettingsScreen() {
+  const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [edits, setEdits] = useState<Record<string, string>>({});
   const [balanceEdits, setBalanceEdits] = useState<Record<string, string>>({});
   const [analytics, setAnalytics] = useState<AnalyticsMonth[]>([]);
+  const [period, setPeriod] = useState<Period>("6m");
+  const [upcomingItems, setUpcomingItems] = useState<UpcomingExpense[]>([]);
 
-  const load = async () => {
-    const [a, an] = await Promise.all([api.accounts(), api.analytics(6)]);
+  const load = async (p: Period = period) => {
+    const [a, an, up] = await Promise.all([api.accounts(), api.analyticsByPeriod(p), api.upcoming()]);
     setAccounts(a);
     setAnalytics(an.months);
-    const e: Record<string, string> = {};
+    setUpcomingItems(up);
     const b: Record<string, string> = {};
     a.forEach((acc) => {
-      e[acc.key] = String(acc.target || 0);
       b[acc.key] = String(acc.balance || 0);
     });
-    setEdits(e);
     setBalanceEdits(b);
   };
 
@@ -31,6 +33,12 @@ export default function SettingsScreen() {
       load();
     }, [])
   );
+
+  const changePeriod = async (p: Period) => {
+    setPeriod(p);
+    const an = await api.analyticsByPeriod(p);
+    setAnalytics(an.months);
+  };
 
   const saveBalance = async (key: string) => {
     const v = parseFloat(balanceEdits[key] || "0");
@@ -85,11 +93,97 @@ export default function SettingsScreen() {
         <Text style={[g.label, { marginBottom: 4 }]}>Settings</Text>
         <Text style={[g.h1, { marginBottom: 18 }]}>Tools & History</Text>
 
+        {/* Navigation tiles */}
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 18 }}>
+          <TouchableOpacity
+            testID="nav-recurring"
+            onPress={() => router.push("/recurring")}
+            style={[g.card, { flex: 1, padding: 14, alignItems: "flex-start" }]}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 12,
+                backgroundColor: "rgba(92,128,101,0.12)",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 10,
+              }}
+            >
+              <Feather name="repeat" color={COLORS.positive} size={18} />
+            </View>
+            <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.textPrimary }}>Recurring</Text>
+            <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>
+              Edit & skip monthly bills
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            testID="nav-upcoming"
+            onPress={() => router.push("/upcoming")}
+            style={[g.card, { flex: 1, padding: 14, alignItems: "flex-start" }]}
+          >
+            <View
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 12,
+                backgroundColor: "rgba(214,159,76,0.18)",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: 10,
+              }}
+            >
+              <Feather name="calendar" color={COLORS.warning} size={18} />
+            </View>
+            <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.textPrimary }}>Upcoming</Text>
+            <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.textSecondary, marginTop: 2 }}>
+              {upcomingItems.filter((i) => !i.realized).length > 0
+                ? `${upcomingItems.filter((i) => !i.realized).length} pending · ${formatCAD(
+                    upcomingItems.filter((i) => !i.realized).reduce((s, i) => s + i.amount, 0)
+                  )}`
+                : "Track large irregular costs"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Insights */}
         <View style={[g.card, { marginBottom: 16 }]} testID="insights-card">
           <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
             <Feather name="bar-chart-2" color={COLORS.textPrimary} size={18} />
-            <Text style={[g.h3, { marginLeft: 8 }]}>Last 6 Months</Text>
+            <Text style={[g.h3, { marginLeft: 8, flex: 1 }]}>Insights</Text>
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 6, marginBottom: 14 }}>
+            {(["3m", "6m", "12m", "ytd"] as Period[]).map((p) => (
+              <TouchableOpacity
+                key={p}
+                testID={`period-${p}`}
+                onPress={() => changePeriod(p)}
+                style={{
+                  flex: 1,
+                  paddingVertical: 8,
+                  borderRadius: 999,
+                  borderWidth: 1,
+                  borderColor: period === p ? COLORS.textPrimary : COLORS.border,
+                  backgroundColor: period === p ? COLORS.textPrimary : "transparent",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: FONTS.bodyMed,
+                    fontSize: 11,
+                    color: period === p ? "#fff" : COLORS.textPrimary,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.8,
+                  }}
+                >
+                  {p === "ytd" ? "YTD" : p.toUpperCase()}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
           {analytics.length === 0 || analytics.every((m) => m.income === 0 && m.expense === 0) ? (
             <Text style={{ fontFamily: FONTS.body, fontSize: 13, color: COLORS.textSecondary }}>

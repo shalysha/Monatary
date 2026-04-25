@@ -44,6 +44,7 @@ export type Category = {
   auto_create: boolean;
   day_of_month: number;
   last_run_month?: string;
+  skipped_months?: string[];
   spent_this_month?: number;
   remaining?: number;
   over_budget?: boolean;
@@ -105,6 +106,17 @@ export type AnalyticsMonth = {
   by_account: Record<string, number>;
 };
 
+export type UpcomingExpense = {
+  id: string;
+  name: string;
+  amount: number;
+  due_date: string;
+  parent_account?: string;
+  notes?: string;
+  realized: boolean;
+  created_at: string;
+};
+
 export const api = {
   init: () => req("/init", { method: "POST" }),
   dashboard: (): Promise<Dashboard> => req("/dashboard"),
@@ -133,6 +145,20 @@ export const api = {
     req(`/analytics?months=${months}`),
   rollover: (sweepToSavings: boolean = true) =>
     req("/rollover", { method: "POST", body: JSON.stringify({ sweep_to_savings: sweepToSavings }) }),
+  analyticsByPeriod: (
+    period: "3m" | "6m" | "12m" | "ytd"
+  ): Promise<{ months: AnalyticsMonth[] }> => req(`/analytics?period=${period}`),
+  skipCategory: (id: string, month: string) =>
+    req(`/categories/${id}/skip`, { method: "POST", body: JSON.stringify({ month }) }),
+  unskipCategory: (id: string, month: string) =>
+    req(`/categories/${id}/unskip`, { method: "POST", body: JSON.stringify({ month }) }),
+  upcoming: (): Promise<UpcomingExpense[]> => req("/upcoming"),
+  createUpcoming: (body: any): Promise<UpcomingExpense> =>
+    req("/upcoming", { method: "POST", body: JSON.stringify(body) }),
+  updateUpcoming: (id: string, body: any): Promise<UpcomingExpense> =>
+    req(`/upcoming/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteUpcoming: (id: string) => req(`/upcoming/${id}`, { method: "DELETE" }),
+  realizeUpcoming: (id: string) => req(`/upcoming/${id}/realize`, { method: "POST" }),
   categories: (): Promise<Category[]> => req("/categories"),
   createCategory: (body: any): Promise<Category> =>
     req("/categories", { method: "POST", body: JSON.stringify(body) }),
