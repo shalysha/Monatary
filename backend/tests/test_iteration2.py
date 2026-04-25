@@ -41,7 +41,9 @@ class TestSeedBudget:
         assert len(fixed) == 14
         assert len(variable) == 7
         assert round(sum(c["monthly_target"] for c in fixed), 2) == 3645.96
-        assert round(sum(c["monthly_target"] for c in variable), 2) == 1800.00
+        # iter4: Utilities became a group ($0) with sub-children Water/Hydro/Heating Gas (50+100+100).
+        # Total variable category targets = 850+300+150+0+50+100+100 = 1550.
+        assert round(sum(c["monthly_target"] for c in variable), 2) == 1550.00
         # auto_create flag
         assert all(c["auto_create"] is True for c in fixed)
         assert all(c["auto_create"] is False for c in variable)
@@ -49,7 +51,7 @@ class TestSeedBudget:
     def test_account_targets_recomputed(self, client):
         accts = {a["key"]: a for a in client.get(f"{API}/accounts").json()}
         assert round(accts["fixed_expenses"]["target"], 2) == 3645.96
-        assert round(accts["variable"]["target"], 2) == 1800.00
+        assert round(accts["variable"]["target"], 2) == 1550.00  # iter4: leaves only (Utilities is now a group)
         assert accts["general"]["target"] == 0.0
         assert accts["savings"]["target"] == 0.0
 

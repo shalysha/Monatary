@@ -24,6 +24,7 @@ export default function BudgetScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
   const [adding, setAdding] = useState<string | null>(null); // parent_account
+  const [addingSubTo, setAddingSubTo] = useState<Category | null>(null); // parent category for sub
   const [draftName, setDraftName] = useState("");
   const [draftAmount, setDraftAmount] = useState("");
   const [draftAuto, setDraftAuto] = useState(false);
@@ -76,14 +77,25 @@ export default function BudgetScreen() {
 
   const startAdd = (parent: string) => {
     setAdding(parent);
+    setAddingSubTo(null);
     setDraftName("");
     setDraftAmount("");
     setDraftAuto(parent === "fixed_expenses");
   };
 
+  const startAddSub = (parentCat: Category) => {
+    setAddingSubTo(parentCat);
+    setAdding(null);
+    setEditing(null);
+    setDraftName("");
+    setDraftAmount("");
+    setDraftAuto(false);
+  };
+
   const closeModal = () => {
     setEditing(null);
     setAdding(null);
+    setAddingSubTo(null);
   };
 
   const saveDraft = async () => {
@@ -97,6 +109,15 @@ export default function BudgetScreen() {
         name: draftName.trim(),
         monthly_target: amt,
         auto_create: draftAuto,
+      });
+    } else if (addingSubTo) {
+      await api.createCategory({
+        name: draftName.trim(),
+        parent_account: addingSubTo.parent_account,
+        parent_id: addingSubTo.id,
+        monthly_target: amt,
+        auto_create: draftAuto,
+        day_of_month: 1,
       });
     } else if (adding) {
       await api.createCategory({
@@ -142,21 +163,47 @@ export default function BudgetScreen() {
     );
   };
 
-  // Group by parent
-  const grouped: Record<string, Category[]> = {};
-  PARENT_ORDER.forEach((p) => (grouped[p] = []));
+  // Group by parent_account, then build tree by parent_id
+  const byParent: Record<string, Category[]> = {};
+  PARENT_ORDER.forEach((p) => (byParent[p] = []));
   categories.forEach((c) => {
-    if (!grouped[c.parent_account]) grouped[c.parent_account] = [];
-    grouped[c.parent_account].push(c);
+    if (!byParent[c.parent_account]) byParent[c.parent_account] = [];
+    byParent[c.parent_account].push(c);
   });
+
+  // Build a render order: roots first, then their children right after
+  const renderOrder: Record<string, Category[]> = {};
+  PARENT_ORDER.forEach((parentKey) => {
+    const all = byParent[parentKey] || [];
+    const roots = all.filter((c) => !c.parent_id);
+    const childrenByParent: Record<string, Category[]> = {};
+    all.forEach((c) => {
+      if (c.parent_id) {
+        (childrenByParent[c.parent_id] = childrenByParent[c.parent_id] || []).push(c);
+      }
+    });
+    const ordered: Category[] = [];
+    roots.forEach((r) => {
+      ordered.push(r);
+      (childrenByParent[r.id] || []).forEach((ch) => ordered.push(ch));
+    });
+    renderOrder[parentKey] = ordered;
+  });
+  const grouped = renderOrder;
 
   const totalsByParent: Record<string, { target: number; spent: number }> = {};
   PARENT_ORDER.forEach((p) => {
-    const items = grouped[p] || [];
-    totalsByParent[p] = {
-      target: items.reduce((s, c) => s + (c.monthly_target || 0), 0),
-      spent: items.reduce((s, c) => s + (c.spent_this_month || 0), 0),
-    };
+    const items = byParent[p] || [];
+    // For account totals, use leaves only (children) + standalone roots (no children).
+    const childIds = new Set(items.filter((c) => c.parent_id).map((c) => c.parent_id!));
+    let target = 0,
+      spent = 0;
+    items.forEach((c) => {
+      if (childIds.has(c.id)) return; // group with children, skip its own
+      target += c.monthly_target || 0;
+      spent += c.spent_this_month || 0;
+    });
+    totalsByParent[p] = { target, spent };
   });
   const grandTarget = Object.values(totalsByParent).reduce((s, v) => s + v.target, 0);
 
@@ -251,24 +298,63 @@ export default function BudgetScreen() {
               )}
 
               {items.map((c) => {
+                const isChild = !!c.parent_id;
+                const isGroup = c.is_group || items.some((x) => x.parent_id === c.id);
+                const target = c.effective_target ?? c.monthly_target;
                 const cpct =
-                  c.monthly_target > 0
-                    ? Math.min(100, ((c.spent_this_month || 0) / c.monthly_target) * 100)
-                    : 0;
+                  target > 0 ? Math.min(100, ((c.spent_this_month || 0) / target) * 100) : 0;
                 const over = c.over_budget;
                 return (
                   <TouchableOpacity
                     key={c.id}
                     testID={`category-${c.id}`}
                     onPress={() => startEdit(c)}
-                    style={[g.card, { marginBottom: 8, padding: 14 }]}
+                    style={[
+                      g.card,
+                      {
+                        marginBottom: 6,
+                        padding: 12,
+                        marginLeft: isChild ? 24 : 0,
+                        backgroundColor: isGroup ? COLORS.surfaceSecondary : COLORS.surface,
+                      },
+                    ]}
                   >
-                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8 }}>
-                      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.textPrimary }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 6 }}>
+                      {isChild && (
+                        <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginRight: 6 }}>└</Text>
+                      )}
+                      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <Text
+                          style={{
+                            fontFamily: FONTS.bodyBold,
+                            fontSize: isGroup ? 15 : 14,
+                            color: COLORS.textPrimary,
+                          }}
+                        >
                           {c.name}
                         </Text>
-                        {c.auto_create && (
+                        {isGroup && (
+                          <View
+                            style={{
+                              paddingHorizontal: 6,
+                              paddingVertical: 2,
+                              borderRadius: 999,
+                              backgroundColor: "rgba(35,43,37,0.08)",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontFamily: FONTS.bodyBold,
+                                fontSize: 9,
+                                color: COLORS.textSecondary,
+                                letterSpacing: 0.8,
+                              }}
+                            >
+                              GROUP
+                            </Text>
+                          </View>
+                        )}
+                        {c.auto_create && !isGroup && (
                           <View
                             style={{
                               paddingHorizontal: 6,
@@ -286,19 +372,19 @@ export default function BudgetScreen() {
                       <Text
                         style={{
                           fontFamily: FONTS.bodyBold,
-                          fontSize: 14,
+                          fontSize: 13,
                           color: over ? COLORS.negative : COLORS.textPrimary,
                         }}
                       >
-                        {formatCAD(c.spent_this_month || 0)} / {formatCAD(c.monthly_target)}
+                        {formatCAD(c.spent_this_month || 0)} / {formatCAD(target)}
                       </Text>
                     </View>
 
                     <View
                       style={{
-                        height: 5,
+                        height: isGroup ? 6 : 4,
                         borderRadius: 999,
-                        backgroundColor: COLORS.surfaceSecondary,
+                        backgroundColor: COLORS.surface,
                         overflow: "hidden",
                       }}
                     >
@@ -311,45 +397,87 @@ export default function BudgetScreen() {
                       />
                     </View>
 
-                    <View style={{ flexDirection: "row", marginTop: 10, gap: 8 }}>
-                      {c.auto_create && (
+                    {!isGroup && (
+                      <View style={{ flexDirection: "row", marginTop: 8, gap: 6 }}>
+                        {c.auto_create && (
+                          <TouchableOpacity
+                            testID={`run-${c.id}`}
+                            onPress={() => runCat(c)}
+                            style={{
+                              paddingVertical: 6,
+                              paddingHorizontal: 10,
+                              borderRadius: 999,
+                              backgroundColor: COLORS.textPrimary,
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 5,
+                            }}
+                          >
+                            <Feather name="zap" color="#fff" size={10} />
+                            <Text style={{ color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 10 }}>Log Now</Text>
+                          </TouchableOpacity>
+                        )}
                         <TouchableOpacity
-                          testID={`run-${c.id}`}
-                          onPress={() => runCat(c)}
+                          testID={`delete-${c.id}`}
+                          onPress={() => deleteCat(c)}
                           style={{
-                            paddingVertical: 7,
-                            paddingHorizontal: 12,
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: COLORS.border,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 5,
+                          }}
+                        >
+                          <Feather name="trash-2" color={COLORS.textSecondary} size={10} />
+                          <Text style={{ color: COLORS.textSecondary, fontFamily: FONTS.bodyMed, fontSize: 10 }}>
+                            Delete
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+
+                    {isGroup && (
+                      <View style={{ flexDirection: "row", marginTop: 8, gap: 6 }}>
+                        <TouchableOpacity
+                          testID={`add-sub-${c.id}`}
+                          onPress={() => startAddSub(c)}
+                          style={{
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
                             borderRadius: 999,
                             backgroundColor: COLORS.textPrimary,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 6,
+                            gap: 5,
                           }}
                         >
-                          <Feather name="zap" color="#fff" size={11} />
-                          <Text style={{ color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 11 }}>Log Now</Text>
+                          <Feather name="plus" color="#fff" size={10} />
+                          <Text style={{ color: "#fff", fontFamily: FONTS.bodyMed, fontSize: 10 }}>Add Sub</Text>
                         </TouchableOpacity>
-                      )}
-                      <TouchableOpacity
-                        testID={`delete-${c.id}`}
-                        onPress={() => deleteCat(c)}
-                        style={{
-                          paddingVertical: 7,
-                          paddingHorizontal: 12,
-                          borderRadius: 999,
-                          borderWidth: 1,
-                          borderColor: COLORS.border,
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <Feather name="trash-2" color={COLORS.textSecondary} size={11} />
-                        <Text style={{ color: COLORS.textSecondary, fontFamily: FONTS.bodyMed, fontSize: 11 }}>
-                          Delete
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
+                        <TouchableOpacity
+                          testID={`delete-${c.id}`}
+                          onPress={() => deleteCat(c)}
+                          style={{
+                            paddingVertical: 6,
+                            paddingHorizontal: 10,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: COLORS.border,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 5,
+                          }}
+                        >
+                          <Feather name="trash-2" color={COLORS.textSecondary} size={10} />
+                          <Text style={{ color: COLORS.textSecondary, fontFamily: FONTS.bodyMed, fontSize: 10 }}>
+                            Delete Group
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -380,7 +508,7 @@ export default function BudgetScreen() {
         })}
       </ScrollView>
 
-      <Modal visible={!!editing || !!adding} animationType="slide" transparent onRequestClose={closeModal}>
+      <Modal visible={!!editing || !!adding || !!addingSubTo} animationType="slide" transparent onRequestClose={closeModal}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={{ flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(35,43,37,0.4)" }}
@@ -395,7 +523,13 @@ export default function BudgetScreen() {
             }}
           >
             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 16 }}>
-              <Text style={[g.h2, { flex: 1 }]}>{editing ? "Edit Category" : "New Category"}</Text>
+              <Text style={[g.h2, { flex: 1 }]}>
+                {editing
+                  ? "Edit Category"
+                  : addingSubTo
+                  ? `Add Sub-Category to ${addingSubTo.name}`
+                  : "New Category"}
+              </Text>
               <TouchableOpacity onPress={closeModal} testID="modal-close">
                 <Feather name="x" color={COLORS.textPrimary} size={22} />
               </TouchableOpacity>

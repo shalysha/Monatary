@@ -123,6 +123,7 @@ class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     parent_account: str  # AccountKey: fixed_expenses | variable | general | savings
+    parent_id: Optional[str] = None  # if set, this is a sub-category nested under another category
     monthly_target: float = 0.0
     auto_create: bool = False  # if true, becomes a recurring monthly expense
     day_of_month: int = 1
@@ -133,6 +134,7 @@ class Category(BaseModel):
 class CategoryCreate(BaseModel):
     name: str
     parent_account: str
+    parent_id: Optional[str] = None
     monthly_target: float = 0.0
     auto_create: bool = False
     day_of_month: int = 1
@@ -141,6 +143,7 @@ class CategoryCreate(BaseModel):
 class CategoryUpdate(BaseModel):
     name: Optional[str] = None
     parent_account: Optional[str] = None
+    parent_id: Optional[str] = None
     monthly_target: Optional[float] = None
     auto_create: Optional[bool] = None
     day_of_month: Optional[int] = None
@@ -559,15 +562,32 @@ async def get_dashboard():
     cat_spend_agg = await db.expenses.aggregate(cat_spend_pipeline).to_list(500)
     cat_spend = {row["_id"]: row["total"] for row in cat_spend_agg if row["_id"]}
 
-    # Categories with progress
+    # Categories with progress (groups roll up children)
     cat_docs = await db.categories.find({}, {"_id": 0}).to_list(500)
+    parent_id_set = {c["parent_id"] for c in cat_docs if c.get("parent_id")}
+
+    # Build child map: parent_id -> [child_docs]
+    child_map: dict = {}
+    for c in cat_docs:
+        pid = c.get("parent_id")
+        if pid:
+            child_map.setdefault(pid, []).append(c)
+
     categories_out = []
     for c in cat_docs:
-        spent = cat_spend.get(c["id"], 0.0)
-        target = c.get("monthly_target", 0.0)
+        is_group = c["id"] in parent_id_set
+        if is_group:
+            children = child_map.get(c["id"], [])
+            spent = sum(cat_spend.get(ch["id"], 0.0) for ch in children)
+            target = sum(ch.get("monthly_target", 0.0) for ch in children)
+        else:
+            spent = cat_spend.get(c["id"], 0.0)
+            target = c.get("monthly_target", 0.0)
         categories_out.append({
             **c,
+            "is_group": is_group,
             "spent_this_month": spent,
+            "effective_target": target,
             "remaining": max(0.0, target - spent),
             "over_budget": spent > target if target > 0 else False,
         })
@@ -631,18 +651,24 @@ async def update_category(cat_id: str, payload: CategoryUpdate):
 
 @api_router.delete("/categories/{cat_id}")
 async def delete_category(cat_id: str):
+    # cascade delete children
+    await db.categories.delete_many({"parent_id": cat_id})
     await db.categories.delete_one({"id": cat_id})
     await _recompute_account_targets()
     return {"status": "deleted"}
 
 
 async def _recompute_account_targets():
-    """Sum each account's category targets and store as account.target."""
-    pipeline = [
-        {"$group": {"_id": "$parent_account", "total": {"$sum": "$monthly_target"}}},
-    ]
-    agg = await db.categories.aggregate(pipeline).to_list(100)
-    sums = {row["_id"]: row["total"] for row in agg}
+    """Sum each account's LEAF category targets and store as account.target.
+    Leaf categories = those without children. Group categories' own monthly_target is ignored
+    so we don't double-count when children exist."""
+    all_cats = await db.categories.find({}, {"_id": 0}).to_list(2000)
+    parent_ids = {c["parent_id"] for c in all_cats if c.get("parent_id")}
+    sums = {"fixed_expenses": 0.0, "variable": 0.0, "general": 0.0, "savings": 0.0}
+    for c in all_cats:
+        if c["id"] in parent_ids:
+            continue  # this is a group; skip its own target
+        sums[c["parent_account"]] = sums.get(c["parent_account"], 0.0) + (c.get("monthly_target") or 0.0)
     for key in ["fixed_expenses", "variable", "general", "savings"]:
         await db.accounts.update_one({"key": key}, {"$set": {"target": sums.get(key, 0.0)}})
 
@@ -693,7 +719,6 @@ async def seed_user_budget():
     variable_items = [
         ("Groceries", 850.00),
         ("Gas (Car)", 300.00),
-        ("Utilities", 250.00),  # Water $50 + Heating Gas $100 + Hydro $100
         ("Cats", 150.00),
     ]
     for name, target in fixed_items:
@@ -702,8 +727,23 @@ async def seed_user_budget():
     for name, target in variable_items:
         cat = Category(name=name, parent_account="variable", monthly_target=target, auto_create=False, day_of_month=1)
         await db.categories.insert_one(cat.model_dump())
+
+    # Utilities group with nested children (Water/Hydro/Heating Gas)
+    utilities = Category(name="Utilities", parent_account="variable", monthly_target=0.0, auto_create=False)
+    await db.categories.insert_one(utilities.model_dump())
+    sub_items = [("Water", 50.00), ("Hydro", 100.00), ("Heating Gas", 100.00)]
+    for name, target in sub_items:
+        sub = Category(
+            name=name,
+            parent_account="variable",
+            parent_id=utilities.id,
+            monthly_target=target,
+            auto_create=False,
+        )
+        await db.categories.insert_one(sub.model_dump())
+
     await _recompute_account_targets()
-    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items)}
+    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items) + 1 + len(sub_items)}
 
 
 app.include_router(api_router)

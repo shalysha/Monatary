@@ -113,9 +113,12 @@ export default function AddExpense() {
     </TouchableOpacity>
   );
 
-  // Group categories by parent
+  // Group categories by parent — only show LEAF categories (those without children) in picker
+  const allCategories = categories;
+  const parentIds = new Set(allCategories.filter((c) => c.parent_id).map((c) => c.parent_id!));
+  const leafCategories = allCategories.filter((c) => !parentIds.has(c.id));
   const grouped: Record<string, Category[]> = {};
-  categories.forEach((c) => {
+  leafCategories.forEach((c) => {
     if (!grouped[c.parent_account]) grouped[c.parent_account] = [];
     grouped[c.parent_account].push(c);
   });

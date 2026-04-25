@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 4 — Nested sub-categories. Added /app/backend/tests/test_iteration4_nested.py covering all 6 requested scenarios. All 7 new tests PASS. Full regression: 40/40 tests pass (16 iter1 + 14 iter2 + 3 iter3-fix + 7 iter4). Verified: (1) seed-budget creates Utilities group (parent_account=variable, parent_id=null, monthly_target=0) and 3 children Water/Hydro/Heating Gas with correct parent_id linkage and targets 50/100/100; (2) variable.target=1550.00 = sum of LEAVES only (850+300+150+50+100+100), Utilities's own target is correctly excluded; (3) POST /api/categories with parent_id increases variable.target by the child's target; (4) PUT child monthly_target propagates to variable.target (50→80 yields +30); (5) GET /api/dashboard returns Utilities with is_group=true, effective_target=250 (sum of children), spent_this_month=0; siblings non-group; (6) Cash expense of $20 against Water rolls up — both Water.spent_this_month=20 AND Utilities.spent_this_month=20, remaining=230; (7) DELETE Utilities cascades — Water/Hydro/Heating Gas all removed, variable.target recomputes from 1550 → 1300. Two stale assertions in iter2/iter3 hardcoding variable.target=1800.00 (from pre-iter4 flat Utilities=$500 seed) were updated to 1550.00 to reflect the new nested structure (test-data maintenance, not code change).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4_nested.py",
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_budget_api.py",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_recompute_account_targets() correctly computes parent_ids set from c['parent_id'] and skips any category whose id is in that set — clean implementation of leaf-only summing.",
+    "Dashboard rollup builds child_map and parent_id_set in single pass; group's own monthly_target is never read (correct since seed leaves it 0 anyway, but defensive — would also work if user set it).",
+    "DELETE /api/categories cascades via delete_many({parent_id: cat_id}) before deleting the parent. Note: only one level deep — if grandchildren existed they wouldn't cascade. Not an issue given current 2-level model but worth noting if nesting deepens.",
+    "Pre-existing iter2/3 notes still apply: server.py at ~770 lines should be split into routers; categories/{id}/run lacks idempotency guard for same month."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4_nested.py (new — 7 tests across 6 scenarios)",
+    "/app/backend/tests/test_iteration2.py (2 lines updated: variable.target 1800→1550 to match new nested seed)",
+    "/app/backend/tests/test_iteration3_fixes.py (1 line updated: variable.target 1800→1550)",
+    "/app/test_reports/iteration_4.json",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "success_rate": {
+    "backend": "100% (40/40, including 7/7 iter4)",
+    "frontend": "not tested — testing_type=backend only"
+  },
+  "seed_data_creation": "Iter4 module fixture resets and re-seeds at start and end so tests leave a clean seeded state. Final state: 21 categories present (14 fixed + 3 standalone variable + 1 group Utilities + 3 children), all balances zero, no TEST_ artifacts leak.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 40 backend tests pass. Run: pytest /app/backend/tests/ -v. Iter4 specifically: pytest /app/backend/tests/test_iteration4_nested.py -v. Variable account target after seed = 1550.00 (NOT 1800). Utilities is a group with monthly_target=0; Water/Hydro/Heating Gas are its children. Frontend (budget.tsx, add-expense.tsx, api.ts) was NOT tested per request — main agent or next agent should verify UI displays the nested hierarchy.",
+  "rca_of_issue": "N/A — no bugs. Two test assertions were stale data from iter1 seed structure ($500 flat Utilities) and were updated to match iter4 nested structure ($250 across 3 children); product code is correct."
+}

@@ -28,7 +28,7 @@ class TestResetClearsCategories:
         assert len(cats) == 21, f"expected 21 seeded categories, got {len(cats)}"
         accts_pre = {a["key"]: a for a in client.get(f"{API}/accounts").json()}
         assert round(accts_pre["fixed_expenses"]["target"], 2) == 3645.96
-        assert round(accts_pre["variable"]["target"], 2) == 1800.00
+        assert round(accts_pre["variable"]["target"], 2) == 1550.00  # iter4: leaves only
 
         # Reset
         r = client.post(f"{API}/reset", timeout=15)

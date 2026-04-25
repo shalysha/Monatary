@@ -39,6 +39,7 @@ export type Category = {
   id: string;
   name: string;
   parent_account: string;
+  parent_id?: string | null;
   monthly_target: number;
   auto_create: boolean;
   day_of_month: number;
@@ -46,6 +47,8 @@ export type Category = {
   spent_this_month?: number;
   remaining?: number;
   over_budget?: boolean;
+  is_group?: boolean;
+  effective_target?: number;
 };
 
 export type DashboardCard = Card & { breakdown: Record<string, number> };
