@@ -693,11 +693,8 @@ async def seed_user_budget():
     variable_items = [
         ("Groceries", 850.00),
         ("Gas (Car)", 300.00),
-        ("Utilities", 250.00),
+        ("Utilities", 250.00),  # Water $50 + Heating Gas $100 + Hydro $100
         ("Cats", 150.00),
-        ("Gas (Heating)", 100.00),
-        ("Hydro", 100.00),
-        ("Water", 50.00),
     ]
     for name, target in fixed_items:
         cat = Category(name=name, parent_account="fixed_expenses", monthly_target=target, auto_create=True, day_of_month=1)
