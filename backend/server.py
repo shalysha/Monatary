@@ -592,7 +592,10 @@ async def reset_all():
     await db.cards.delete_many({})
     await db.incomes.delete_many({})
     await db.expenses.delete_many({})
+    await db.categories.delete_many({})
+    await db.recurring.delete_many({})
     await ensure_seed()
+    await _recompute_account_targets()
     return {"status": "reset"}
 
 

@@ -39,8 +39,8 @@ export default function AddExpense() {
   const selectCategory = (cat: Category) => {
     setCategoryId(cat.id);
     if (!description.trim()) setDescription(cat.name);
-    if (method === "cash") setSourceAccount(cat.parent_account);
-    else setPayoffAccount(cat.parent_account);
+    setSourceAccount(cat.parent_account);
+    setPayoffAccount(cat.parent_account);
   };
 
   const submit = async () => {

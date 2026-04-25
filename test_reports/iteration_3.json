@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 retest of two iter2 fixes for Zero-Based Budgeting CAD app. Both fixes verified PASS end-to-end. (1) Backend POST /api/reset now clears categories AND calls _recompute_account_targets — verified with new pytest: after seeding 21 categories then resetting, GET /api/categories returns [] and all 4 account.target values are 0.0. (2) Frontend add-expense.tsx selectCategory() now sets BOTH sourceAccount and payoffAccount to cat.parent_account unconditionally — verified with Playwright UI flow: tapping Groceries (variable bucket) auto-activates the Variable source pill, and saving with method=cash debits the Variable bucket (1000→925, Δ=75). Credit path also re-tested: tapping Groceries with default method=credit shows the Variable payoff pill active, and saving creates a credit expense with payoff_account=variable, increasing variable.owed_to_cards by exactly 60. category_id is correctly attached and dashboard.categories.spent_this_month for Groceries = 75.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "all", "issues": ["Pre-existing console warnings unchanged: 'shadow*' style props deprecated → use boxShadow; props.pointerEvents deprecated → use style.pointerEvents. Cosmetic, non-blocking."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3_fixes.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_budget_api.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Both reported iter2 bugs are now fixed correctly. /api/reset implementation at server.py:590 deletes accounts/cards/incomes/expenses/categories/recurring, calls ensure_seed(), then _recompute_account_targets() — clean. selectCategory() at add-expense.tsx:39 now updates both sourceAccount and payoffAccount unconditionally — clean.",
+    "Pre-existing iter2 note still applies: server.py is ~720 lines; consider splitting into routers as more endpoints are added.",
+    "Pre-existing iter2 note still applies: POST /api/categories/{id}/run has no idempotency guard for the same month."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_fixes.py (new — 3 targeted retests)",
+    "/app/test_reports/iteration_3.json",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "success_rate": {"backend": "100% (3/3 iter3 + 30/30 regression available)", "frontend": "100% (cash + credit paths verified)"},
+  "seed_data_creation": "Tests reset and re-seed budget around runs. Final state at end of iteration: /api/reset followed by /api/seed-budget — 21 categories present, all balances zero, no TEST_ data leaking.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both iter2 fixes confirmed via /app/backend/tests/test_iteration3_fixes.py and Playwright UI flow against the deployed Expo web preview at https://budget-zero-app.preview.emergentagent.com. Run full regression with: pytest /app/backend/tests/ -v",
+  "rca_of_issue": "N/A — retest only; both reported bugs are fixed."
+}
