@@ -793,6 +793,8 @@ async def realize_upcoming(up_id: str):
     doc = await db.upcoming.find_one({"id": up_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
+    if doc.get("realized"):
+        raise HTTPException(400, "Already realized")
     if not doc.get("parent_account"):
         raise HTTPException(400, "parent_account required to realize upcoming expense")
     payload = ExpenseCreate(
