@@ -281,7 +281,7 @@ async def get_cards():
 async def create_income(payload: IncomeCreate):
     await ensure_seed()
     alloc = payload.allocation
-    total = alloc.fixed_expenses + alloc.variable + alloc.general + alloc.savings
+    total = sum(alloc.model_dump().values())
     income = Income(
         source=payload.source,
         date=payload.date or datetime.now(timezone.utc).date().isoformat(),
