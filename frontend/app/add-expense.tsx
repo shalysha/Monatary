@@ -12,7 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { api, Account, Card } from "../api";
+import { api, Account, Card, Category } from "../api";
 import { COLORS, FONTS, ACCOUNT_LABELS, CARD_LABELS, styles as g } from "../theme";
 
 type Method = "cash" | "credit";
@@ -21,17 +21,27 @@ export default function AddExpense() {
   const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<Method>("credit");
   const [sourceAccount, setSourceAccount] = useState<string>("general");
   const [card, setCard] = useState<string>("amex");
   const [payoffAccount, setPayoffAccount] = useState<string>("general");
+  const [categoryId, setCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     api.accounts().then(setAccounts);
     api.cards().then(setCards);
+    api.categories().then(setCategories);
   }, []);
+
+  const selectCategory = (cat: Category) => {
+    setCategoryId(cat.id);
+    if (!description.trim()) setDescription(cat.name);
+    if (method === "cash") setSourceAccount(cat.parent_account);
+    else setPayoffAccount(cat.parent_account);
+  };
 
   const submit = async () => {
     const amt = parseFloat(amount || "0");
@@ -39,10 +49,13 @@ export default function AddExpense() {
       Alert.alert("Missing info", "Add a description and amount.");
       return;
     }
+    const cat = categories.find((c) => c.id === categoryId);
     const body: any = {
       description: description.trim(),
       amount: amt,
       payment_method: method,
+      category_id: categoryId,
+      category: cat?.name,
     };
     if (method === "cash") body.source_account = sourceAccount;
     else {
@@ -99,6 +112,14 @@ export default function AddExpense() {
       </Text>
     </TouchableOpacity>
   );
+
+  // Group categories by parent
+  const grouped: Record<string, Category[]> = {};
+  categories.forEach((c) => {
+    if (!grouped[c.parent_account]) grouped[c.parent_account] = [];
+    grouped[c.parent_account].push(c);
+  });
+  const PARENT_ORDER = ["fixed_expenses", "variable", "general", "savings"];
 
   return (
     <SafeAreaView style={g.screen} edges={["top", "bottom"]}>
@@ -160,6 +181,50 @@ export default function AddExpense() {
               }}
             />
           </View>
+
+          {categories.length > 0 && (
+            <>
+              <Text style={g.label}>Category (optional)</Text>
+              <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.textSecondary, marginTop: 4 }}>
+                Selecting a category auto-fills the bucket for tracking.
+              </Text>
+              <View style={{ marginTop: 10, marginBottom: 14 }}>
+                {PARENT_ORDER.map((parent) => {
+                  const items = grouped[parent] || [];
+                  if (items.length === 0) return null;
+                  return (
+                    <View key={parent} style={{ marginBottom: 6 }}>
+                      <Text
+                        style={{
+                          fontFamily: FONTS.bodyBold,
+                          fontSize: 10,
+                          color: COLORS.textSecondary,
+                          letterSpacing: 1.5,
+                          textTransform: "uppercase",
+                          marginBottom: 6,
+                          marginTop: 6,
+                        }}
+                      >
+                        {ACCOUNT_LABELS[parent]}
+                      </Text>
+                      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+                        {items.map((c) => (
+                          <Pill
+                            key={c.id}
+                            active={categoryId === c.id}
+                            label={c.name}
+                            color={COLORS.accounts[c.parent_account]}
+                            onPress={() => selectCategory(c)}
+                            testID={`exp-cat-${c.id}`}
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          )}
 
           <Text style={g.label}>Paid With</Text>
           <View style={{ flexDirection: "row", marginTop: 8, gap: 8, marginBottom: 16 }}>

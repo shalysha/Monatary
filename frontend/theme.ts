@@ -40,7 +40,7 @@ export const formatCAD = (n: number) => {
 export const ACCOUNT_LABELS: Record<string, string> = {
   fixed_expenses: "Fixed Expenses",
   variable: "Variable",
-  general: "General",
+  general: "Spending",
   savings: "Savings",
 };
 

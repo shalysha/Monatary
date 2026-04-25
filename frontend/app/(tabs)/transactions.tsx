@@ -13,6 +13,7 @@ type Tx =
 export default function TransactionsScreen() {
   const [items, setItems] = useState<Tx[]>([]);
   const [filter, setFilter] = useState<"all" | "income" | "expense">("all");
+  const [showPaid, setShowPaid] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = async () => {
@@ -40,7 +41,11 @@ export default function TransactionsScreen() {
     setRefreshing(false);
   };
 
-  const filtered = items.filter((t) => filter === "all" || t._kind === filter);
+  const filtered = items.filter((t) => {
+    if (filter !== "all" && t._kind !== filter) return false;
+    if (!showPaid && t._kind === "expense" && (t as any).paid) return false;
+    return true;
+  });
 
   const remove = (t: Tx) => {
     Alert.alert("Delete", "Remove this transaction?", [
@@ -94,6 +99,29 @@ export default function TransactionsScreen() {
         ))}
       </View>
 
+      <View style={{ flexDirection: "row", paddingHorizontal: 20, marginBottom: 8 }}>
+        <TouchableOpacity
+          testID="toggle-paid"
+          onPress={() => setShowPaid(!showPaid)}
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            paddingVertical: 6,
+            paddingHorizontal: 12,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            backgroundColor: showPaid ? "rgba(92,128,101,0.08)" : "transparent",
+          }}
+        >
+          <Feather name={showPaid ? "eye" : "eye-off"} size={12} color={COLORS.textSecondary} />
+          <Text style={{ fontFamily: FONTS.bodyMed, fontSize: 11, color: COLORS.textSecondary }}>
+            {showPaid ? "Showing paid history" : "Hiding paid history"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       <ScrollView
         contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 120 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -130,9 +158,32 @@ export default function TransactionsScreen() {
                   <Feather name="arrow-up-right" color={COLORS.negative} size={18} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 15, color: COLORS.textPrimary }}>
-                    {t.description}
-                  </Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 15, color: COLORS.textPrimary }}>
+                      {t.description}
+                    </Text>
+                    {(t as any).paid && (
+                      <View
+                        style={{
+                          paddingHorizontal: 6,
+                          paddingVertical: 2,
+                          borderRadius: 999,
+                          backgroundColor: "rgba(92,128,101,0.12)",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            fontFamily: FONTS.bodyBold,
+                            fontSize: 9,
+                            color: COLORS.positive,
+                            letterSpacing: 0.8,
+                          }}
+                        >
+                          PAID
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.textSecondary, marginTop: 2 }}>
                     {t.payment_method === "cash"
                       ? `Cash · ${ACCOUNT_LABELS[t.source_account || ""]}`

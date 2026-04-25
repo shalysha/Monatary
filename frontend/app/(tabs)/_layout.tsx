@@ -33,6 +33,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="budget"
+        options={{
+          title: "Budget",
+          tabBarIcon: ({ color, size }) => <Feather name="pie-chart" color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
         name="transactions"
         options={{
           title: "Activity",

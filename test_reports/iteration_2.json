@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 2 backend + frontend testing for Zero-Based Budgeting CAD app. Backend: 30/30 pytest cases passed (14 new iter2 + 16 iter1 regression) covering categories CRUD with account.target recompute, /seed-budget idempotency & exact totals (Fixed=$3,645.96 / Variable=$1,800), category run, expense.category_id link, dashboard.categories with spent/over_budget, paid CC ledger preservation (no balance reversal on delete-paid, owed_to_cards excludes paid), /analytics?months=6 shape, /rollover sweep to savings, account.name update. Frontend: Dashboard renders 4 buckets with 'Spending' display label, 3 cards; Budget tab shows all 21 seeded categories grouped by parent, FIXED badges on 14 fixed items, 14 Log Now buttons, totals visible; Settings shows Insights card + Sweep to Savings button; Activity shows toggle-paid. Add-expense modal renders category pills grouped by bucket and auto-fills description on tap. ONE backend bug found and FIXED by this agent (category_id was not persisted on POST /api/expenses). ONE frontend integration bug remains (category->bucket auto-fill only updates the side matching the currently selected method).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/reset", "issue": "Does NOT delete the categories collection. Categories from previous /seed-budget runs persist after reset, leaving account.target stale until categories are explicitly cleared or seed-budget is rerun. Recommend extending reset to also drop categories AND call _recompute_account_targets()."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Add Expense → Category pill auto-bucket",
+        "issue": "selectCategory() only updates EITHER sourceAccount (when method=cash) OR payoffAccount (when method=credit) based on the method at the moment of tap. If the user taps a category pill (default method=credit) and then switches to method=cash, sourceAccount remains the default 'general' instead of the category's parent_account. Reproduced: tapped Groceries (variable) while method=credit → switched to cash → saved → expense was deducted from 'general' (Spending) account instead of 'variable'. Fix: in /app/frontend/app/add-expense.tsx selectCategory(), set BOTH setSourceAccount(cat.parent_account) and setPayoffAccount(cat.parent_account) regardless of method, OR re-apply categoryId's parent on every method change.",
+        "affected_testIDs": ["exp-cat-{id}", "method-cash", "method-credit", "source-{key}", "payoff-{key}", "save-expense"]
+      }
+    ],
+    "design_issues": [
+      {"screen": "all", "issues": ["Existing console warnings: 'shadow*' style props deprecated → use boxShadow; props.pointerEvents deprecated → use style.pointerEvents. Cosmetic, non-blocking."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_budget_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "[FRONTEND] Fix category→bucket auto-fill in /app/frontend/app/add-expense.tsx selectCategory(): set BOTH sourceAccount and payoffAccount to cat.parent_account so behavior is correct regardless of which payment method the user picks afterwards.",
+    "[BACKEND - minor] Extend POST /api/reset to also clear db.categories and re-run _recompute_account_targets() so resets are truly clean."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED by this agent: POST /api/expenses ignored the category_id field — the Expense() construction in create_expense() did not pass category_id from the payload, breaking dashboard.categories.spent_this_month, analytics.by_category, and the run_category linkage. Added category_id=payload.category_id in /app/backend/server.py.",
+    "server.py is now ~720 lines; still a single file. As more endpoints are added, consider splitting into routers (accounts/cards/incomes/expenses/categories/dashboard).",
+    "MongoDB _id correctly excluded everywhere via projection {'_id':0}.",
+    "/api/categories/{id}/run unconditionally creates an expense even if last_run_month already equals current month — there is no idempotency guard; calling /run twice in the same month creates two expenses. May or may not be desired."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (added category_id passthrough in create_expense)",
+    "/app/backend/tests/test_iteration2.py (created — 14 new tests)",
+    "/app/test_reports/iteration_2.json (created)",
+    "/app/test_reports/pytest/pytest_results.xml (regenerated)"
+  ],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "~95% (one integration bug)"},
+  "seed_data_creation": "POST /api/reset and POST /api/seed-budget used at start of iter2 fixture. Tests create TEST_-prefixed expenses/categories and clean up. Re-seed performed after testing so the deployed environment is left in a usable state for the user (21 categories present, balances zero).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests in /app/backend/tests/test_iteration2.py + /app/backend/tests/test_budget_api.py — run together for full regression. The main agent should fix the add-expense.tsx selectCategory() bug; once fixed, retest end-to-end by selecting a category pill, switching method to cash, saving, then verifying GET /api/accounts shows the deduction from the category's parent_account (e.g., variable for Groceries). EXPO_PUBLIC_BACKEND_URL=https://budget-zero-app.preview.emergentagent.com.",
+  "rca_of_issue": "Backend category_id missing: ExpenseCreate model included category_id but create_expense() forgot to copy it into the Expense() constructor — pure copy-paste oversight from earlier iteration. Fixed in one line. Frontend bucket auto-fill: selectCategory() branches on the current `method` state and only updates one of {sourceAccount, payoffAccount}; switching method afterward leaves the unupdated side at its default ('general'). Fix is to update both fields unconditionally."
+}

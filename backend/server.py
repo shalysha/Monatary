@@ -69,14 +69,13 @@ class Income(BaseModel):
 class ExpenseCreate(BaseModel):
     description: str
     amount: float
-    category: Optional[str] = None
+    category: Optional[str] = None  # legacy free-text
+    category_id: Optional[str] = None
     date: Optional[str] = None
     payment_method: Literal["cash", "credit"]
-    # If cash: source_account is required (debits balance from this bank account)
     source_account: Optional[str] = None  # AccountKey
-    # If credit: card and payoff_account are required
     card: Optional[str] = None  # CardKey
-    payoff_account: Optional[str] = None  # AccountKey - which bank should pay the card off
+    payoff_account: Optional[str] = None  # AccountKey
 
 
 class Expense(BaseModel):
@@ -84,12 +83,67 @@ class Expense(BaseModel):
     description: str
     amount: float
     category: Optional[str] = None
+    category_id: Optional[str] = None
     date: str
     payment_method: str
     source_account: Optional[str] = None
     card: Optional[str] = None
     payoff_account: Optional[str] = None
+    paid: bool = False
+    paid_at: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class RecurringExpense(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    description: str
+    amount: float
+    category: Optional[str] = None
+    payment_method: Literal["cash", "credit"]
+    source_account: Optional[str] = None
+    card: Optional[str] = None
+    payoff_account: Optional[str] = None
+    day_of_month: int = 1
+    last_run_month: Optional[str] = None  # YYYY-MM
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class RecurringCreate(BaseModel):
+    description: str
+    amount: float
+    category: Optional[str] = None
+    payment_method: Literal["cash", "credit"]
+    source_account: Optional[str] = None
+    card: Optional[str] = None
+    payoff_account: Optional[str] = None
+    day_of_month: int = 1
+
+
+class Category(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    parent_account: str  # AccountKey: fixed_expenses | variable | general | savings
+    monthly_target: float = 0.0
+    auto_create: bool = False  # if true, becomes a recurring monthly expense
+    day_of_month: int = 1
+    last_run_month: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    parent_account: str
+    monthly_target: float = 0.0
+    auto_create: bool = False
+    day_of_month: int = 1
+
+
+class CategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_account: Optional[str] = None
+    monthly_target: Optional[float] = None
+    auto_create: Optional[bool] = None
+    day_of_month: Optional[int] = None
 
 
 class AccountUpdate(BaseModel):
@@ -102,7 +156,7 @@ class AccountUpdate(BaseModel):
 DEFAULT_ACCOUNTS = [
     {"key": "fixed_expenses", "name": "Fixed Expenses", "color": "#8D9489", "target": 0.0, "balance": 0.0},
     {"key": "variable", "name": "Variable", "color": "#D69F4C", "target": 0.0, "balance": 0.0},
-    {"key": "general", "name": "General", "color": "#9A8C73", "target": 0.0, "balance": 0.0},
+    {"key": "general", "name": "Spending", "color": "#9A8C73", "target": 0.0, "balance": 0.0},
     {"key": "savings", "name": "Savings", "color": "#5C8065", "target": 0.0, "balance": 0.0},
 ]
 DEFAULT_CARDS = [
@@ -230,6 +284,7 @@ async def create_expense(payload: ExpenseCreate):
         description=payload.description,
         amount=payload.amount,
         category=payload.category,
+        category_id=payload.category_id,
         date=payload.date or datetime.now(timezone.utc).date().isoformat(),
         payment_method=payload.payment_method,
         source_account=payload.source_account,
@@ -261,12 +316,133 @@ async def delete_expense(expense_id: str):
     doc = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Expense not found")
-    if doc["payment_method"] == "cash" and doc.get("source_account"):
-        await db.accounts.update_one({"key": doc["source_account"]}, {"$inc": {"balance": doc["amount"]}})
-    elif doc["payment_method"] == "credit" and doc.get("card"):
-        await db.cards.update_one({"key": doc["card"]}, {"$inc": {"balance": -doc["amount"]}})
+    # Skip balance reversal if already paid (settled history)
+    if not doc.get("paid"):
+        if doc["payment_method"] == "cash" and doc.get("source_account"):
+            await db.accounts.update_one({"key": doc["source_account"]}, {"$inc": {"balance": doc["amount"]}})
+        elif doc["payment_method"] == "credit" and doc.get("card"):
+            await db.cards.update_one({"key": doc["card"]}, {"$inc": {"balance": -doc["amount"]}})
     await db.expenses.delete_one({"id": expense_id})
     return {"status": "deleted"}
+
+
+# ---------- Recurring expenses ----------
+@api_router.get("/recurring", response_model=List[RecurringExpense])
+async def list_recurring():
+    docs = await db.recurring.find({}, {"_id": 0}).to_list(500)
+    return [RecurringExpense(**d) for d in docs]
+
+
+@api_router.post("/recurring", response_model=RecurringExpense)
+async def create_recurring(payload: RecurringCreate):
+    if payload.payment_method == "cash" and not payload.source_account:
+        raise HTTPException(400, "source_account required")
+    if payload.payment_method == "credit" and (not payload.card or not payload.payoff_account):
+        raise HTTPException(400, "card and payoff_account required")
+    rec = RecurringExpense(**payload.model_dump())
+    await db.recurring.insert_one(rec.model_dump())
+    return rec
+
+
+@api_router.delete("/recurring/{rec_id}")
+async def delete_recurring(rec_id: str):
+    await db.recurring.delete_one({"id": rec_id})
+    return {"status": "deleted"}
+
+
+@api_router.post("/recurring/{rec_id}/run")
+async def run_recurring(rec_id: str):
+    """Manually run a recurring template — creates an expense for current month."""
+    rec = await db.recurring.find_one({"id": rec_id}, {"_id": 0})
+    if not rec:
+        raise HTTPException(404, "Not found")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    payload = ExpenseCreate(
+        description=rec["description"],
+        amount=rec["amount"],
+        category=rec.get("category"),
+        payment_method=rec["payment_method"],
+        source_account=rec.get("source_account"),
+        card=rec.get("card"),
+        payoff_account=rec.get("payoff_account"),
+    )
+    expense = await create_expense(payload)
+    await db.recurring.update_one({"id": rec_id}, {"$set": {"last_run_month": month}})
+    return {"status": "ok", "expense_id": expense.id}
+
+
+# ---------- Analytics ----------
+@api_router.get("/analytics")
+async def analytics(months: int = 6):
+    """Returns per-month totals for income, expenses, and per-account spend."""
+    today = datetime.now(timezone.utc)
+    results = []
+    for i in range(months):
+        # compute month YYYY-MM going back i months
+        y = today.year
+        m = today.month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        month_str = f"{y:04d}-{m:02d}"
+
+        # Income
+        inc_pipe = [
+            {"$match": {"date": {"$regex": f"^{month_str}"}}},
+            {"$group": {"_id": None, "total": {"$sum": "$total"}}},
+        ]
+        inc_agg = await db.incomes.aggregate(inc_pipe).to_list(1)
+        income_total = inc_agg[0]["total"] if inc_agg else 0.0
+
+        # Expenses by account
+        exp_pipe = [
+            {"$match": {"date": {"$regex": f"^{month_str}"}}},
+            {"$project": {
+                "amount": 1,
+                "account": {"$ifNull": ["$source_account", "$payoff_account"]},
+            }},
+            {"$group": {"_id": "$account", "total": {"$sum": "$amount"}}},
+        ]
+        exp_agg = await db.expenses.aggregate(exp_pipe).to_list(100)
+        by_account = {row["_id"]: row["total"] for row in exp_agg if row["_id"]}
+        expense_total = sum(by_account.values())
+
+        # Expenses by category
+        cat_pipe = [
+            {"$match": {"date": {"$regex": f"^{month_str}"}, "category_id": {"$ne": None}}},
+            {"$group": {"_id": "$category_id", "total": {"$sum": "$amount"}}},
+        ]
+        cat_agg = await db.expenses.aggregate(cat_pipe).to_list(500)
+        by_category = {row["_id"]: row["total"] for row in cat_agg if row["_id"]}
+
+        results.append({
+            "month": month_str,
+            "income": income_total,
+            "expense": expense_total,
+            "net": income_total - expense_total,
+            "by_account": by_account,
+            "by_category": by_category,
+        })
+    return {"months": list(reversed(results))}
+
+
+# ---------- Monthly rollover ----------
+class RolloverRequest(BaseModel):
+    sweep_to_savings: bool = True
+
+
+@api_router.post("/rollover")
+async def rollover(payload: RolloverRequest):
+    """Sweep leftover positive balance from Fixed/Variable/General into Savings, optionally."""
+    swept = {}
+    if payload.sweep_to_savings:
+        for key in ["fixed_expenses", "variable", "general"]:
+            doc = await db.accounts.find_one({"key": key}, {"_id": 0})
+            if doc and doc["balance"] > 0:
+                swept[key] = doc["balance"]
+                await db.accounts.update_one({"key": key}, {"$set": {"balance": 0.0}})
+                await db.accounts.update_one({"key": "savings"}, {"$inc": {"balance": doc["balance"]}})
+    return {"status": "ok", "swept": swept}
 
 
 # Pay off a credit card (transfers from bank accounts to clear card balance)
@@ -283,9 +459,9 @@ async def payoff_card(payload: PayoffRequest):
     if not card_doc:
         raise HTTPException(404, "Card not found")
 
-    # Determine allocation from outstanding credit expenses on this card
+    # Determine allocation from outstanding (unpaid) credit expenses on this card
     pipeline = [
-        {"$match": {"payment_method": "credit", "card": payload.card}},
+        {"$match": {"payment_method": "credit", "card": payload.card, "paid": {"$ne": True}}},
         {"$group": {"_id": "$payoff_account", "total": {"$sum": "$amount"}}},
     ]
     agg = await db.expenses.aggregate(pipeline).to_list(100)
@@ -294,8 +470,12 @@ async def payoff_card(payload: PayoffRequest):
     for acct_key, amt in transfers.items():
         await db.accounts.update_one({"key": acct_key}, {"$inc": {"balance": -amt}})
     await db.cards.update_one({"key": payload.card}, {"$set": {"balance": 0.0}})
-    # Mark expenses as paid by removing them from outstanding (delete them so balances are clean)
-    await db.expenses.delete_many({"payment_method": "credit", "card": payload.card})
+    # Mark expenses as paid (preserve history)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.expenses.update_many(
+        {"payment_method": "credit", "card": payload.card, "paid": {"$ne": True}},
+        {"$set": {"paid": True, "paid_at": now_iso}},
+    )
     return {"status": "ok", "transfers": transfers}
 
 
@@ -306,9 +486,9 @@ async def get_dashboard():
     accounts = await db.accounts.find({}, {"_id": 0}).to_list(100)
     cards = await db.cards.find({}, {"_id": 0}).to_list(100)
 
-    # Aggregate credit expense allocations per card x payoff_account
+    # Aggregate credit expense allocations per card x payoff_account (unpaid only)
     pipeline = [
-        {"$match": {"payment_method": "credit"}},
+        {"$match": {"payment_method": "credit", "paid": {"$ne": True}}},
         {"$group": {
             "_id": {"card": "$card", "payoff_account": "$payoff_account"},
             "total": {"$sum": "$amount"},
@@ -371,9 +551,31 @@ async def get_dashboard():
     total_owed = sum(c["balance"] for c in cards)
     total_projected = total_balance - total_owed
 
+    # Per-category spent_this_month
+    cat_spend_pipeline = [
+        {"$match": {"date": {"$regex": f"^{month}"}, "category_id": {"$ne": None}}},
+        {"$group": {"_id": "$category_id", "total": {"$sum": "$amount"}}},
+    ]
+    cat_spend_agg = await db.expenses.aggregate(cat_spend_pipeline).to_list(500)
+    cat_spend = {row["_id"]: row["total"] for row in cat_spend_agg if row["_id"]}
+
+    # Categories with progress
+    cat_docs = await db.categories.find({}, {"_id": 0}).to_list(500)
+    categories_out = []
+    for c in cat_docs:
+        spent = cat_spend.get(c["id"], 0.0)
+        target = c.get("monthly_target", 0.0)
+        categories_out.append({
+            **c,
+            "spent_this_month": spent,
+            "remaining": max(0.0, target - spent),
+            "over_budget": spent > target if target > 0 else False,
+        })
+
     return {
         "accounts": account_summary,
         "cards": card_summary,
+        "categories": categories_out,
         "totals": {
             "total_balance": total_balance,
             "total_owed": total_owed,
@@ -392,6 +594,116 @@ async def reset_all():
     await db.expenses.delete_many({})
     await ensure_seed()
     return {"status": "reset"}
+
+
+# ---------- Categories ----------
+@api_router.get("/categories", response_model=List[Category])
+async def list_categories():
+    docs = await db.categories.find({}, {"_id": 0}).to_list(500)
+    order = {"fixed_expenses": 0, "variable": 1, "general": 2, "savings": 3}
+    docs.sort(key=lambda d: (order.get(d.get("parent_account", ""), 99), d.get("name", "")))
+    return [Category(**d) for d in docs]
+
+
+@api_router.post("/categories", response_model=Category)
+async def create_category(payload: CategoryCreate):
+    cat = Category(**payload.model_dump())
+    await db.categories.insert_one(cat.model_dump())
+    await _recompute_account_targets()
+    return cat
+
+
+@api_router.put("/categories/{cat_id}", response_model=Category)
+async def update_category(cat_id: str, payload: CategoryUpdate):
+    fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "No fields")
+    await db.categories.update_one({"id": cat_id}, {"$set": fields})
+    doc = await db.categories.find_one({"id": cat_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Not found")
+    await _recompute_account_targets()
+    return Category(**doc)
+
+
+@api_router.delete("/categories/{cat_id}")
+async def delete_category(cat_id: str):
+    await db.categories.delete_one({"id": cat_id})
+    await _recompute_account_targets()
+    return {"status": "deleted"}
+
+
+async def _recompute_account_targets():
+    """Sum each account's category targets and store as account.target."""
+    pipeline = [
+        {"$group": {"_id": "$parent_account", "total": {"$sum": "$monthly_target"}}},
+    ]
+    agg = await db.categories.aggregate(pipeline).to_list(100)
+    sums = {row["_id"]: row["total"] for row in agg}
+    for key in ["fixed_expenses", "variable", "general", "savings"]:
+        await db.accounts.update_one({"key": key}, {"$set": {"target": sums.get(key, 0.0)}})
+
+
+# ---------- Run a recurring category ----------
+@api_router.post("/categories/{cat_id}/run")
+async def run_category(cat_id: str):
+    """Create an expense from a category template (cash payment from its parent_account)."""
+    cat = await db.categories.find_one({"id": cat_id}, {"_id": 0})
+    if not cat:
+        raise HTTPException(404, "Not found")
+    parent = cat["parent_account"]
+    payload = ExpenseCreate(
+        description=cat["name"],
+        amount=cat["monthly_target"],
+        category=cat["name"],
+        category_id=cat["id"],
+        payment_method="cash",
+        source_account=parent,
+    )
+    expense = await create_expense(payload)
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    await db.categories.update_one({"id": cat_id}, {"$set": {"last_run_month": month}})
+    return {"status": "ok", "expense_id": expense.id}
+
+
+# ---------- User Budget Seeding (idempotent: replaces existing categories) ----------
+@api_router.post("/seed-budget")
+async def seed_user_budget():
+    await ensure_seed()
+    await db.categories.delete_many({})
+    fixed_items = [
+        ("Rent", 2442.00),
+        ("Car Payments", 542.00),
+        ("Car Insurance", 187.23),
+        ("Phone", 182.27),
+        ("Cat Insurance", 67.28),
+        ("Internet", 62.15),
+        ("Donations", 45.00),
+        ("Home Insurance", 34.56),
+        ("School", 25.30),
+        ("Spotify", 20.33),
+        ("Amex (Membership)", 12.99),
+        ("Amazon", 11.29),
+        ("Oura", 9.05),
+        ("Apple", 4.51),
+    ]
+    variable_items = [
+        ("Groceries", 850.00),
+        ("Gas (Car)", 300.00),
+        ("Utilities", 250.00),
+        ("Cats", 150.00),
+        ("Gas (Heating)", 100.00),
+        ("Hydro", 100.00),
+        ("Water", 50.00),
+    ]
+    for name, target in fixed_items:
+        cat = Category(name=name, parent_account="fixed_expenses", monthly_target=target, auto_create=True, day_of_month=1)
+        await db.categories.insert_one(cat.model_dump())
+    for name, target in variable_items:
+        cat = Category(name=name, parent_account="variable", monthly_target=target, auto_create=False, day_of_month=1)
+        await db.categories.insert_one(cat.model_dump())
+    await _recompute_account_targets()
+    return {"status": "ok", "fixed_count": len(fixed_items), "variable_count": len(variable_items)}
 
 
 app.include_router(api_router)
