@@ -1,43 +1,62 @@
 import { Stack } from "expo-router";
-import { useFonts, Outfit_700Bold, Outfit_600SemiBold } from "@expo-google-fonts/outfit";
 import {
-  Manrope_400Regular,
-  Manrope_500Medium,
-  Manrope_700Bold,
-} from "@expo-google-fonts/manrope";
+  PlayfairDisplay_700Bold,
+  PlayfairDisplay_600SemiBold,
+  PlayfairDisplay_700Bold_Italic,
+} from "@expo-google-fonts/playfair-display";
+import {
+  SourceSans3_400Regular,
+  SourceSans3_500Medium,
+  SourceSans3_700Bold,
+} from "@expo-google-fonts/source-sans-3";
+import { useFonts } from "expo-font";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { COLORS } from "../../theme";
 
 export default function RootLayout() {
   const [loaded] = useFonts({
-    Outfit_700Bold,
-    Outfit_600SemiBold,
-    Manrope_400Regular,
-    Manrope_500Medium,
-    Manrope_700Bold,
+    PlayfairDisplay_700Bold,
+    PlayfairDisplay_600SemiBold,
+    PlayfairDisplay_700Bold_Italic,
+    SourceSans3_400Regular,
+    SourceSans3_500Medium,
+    SourceSans3_700Bold,
   });
+
   if (!loaded) {
     return (
       <View style={styles.loader}>
-        <ActivityIndicator color="#5C8065" />
+        <ActivityIndicator color={COLORS.primary} />
       </View>
     );
   }
+
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#F7F5F0" } }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: COLORS.background },
+        }}
+      >
         <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="add-income" options={{ presentation: "modal" }} />
+        <Stack.Screen name="add-income"  options={{ presentation: "modal" }} />
         <Stack.Screen name="add-expense" options={{ presentation: "modal" }} />
-        <Stack.Screen name="recurring" options={{ presentation: "modal" }} />
-        <Stack.Screen name="upcoming" options={{ presentation: "modal" }} />
+        <Stack.Screen name="recurring"   options={{ presentation: "modal" }} />
+        <Stack.Screen name="upcoming"    options={{ presentation: "modal" }} />
       </Stack>
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  loader: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#F7F5F0" },
+  loader: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.background,
+  },
 });
