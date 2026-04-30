@@ -13,7 +13,7 @@ import { useFonts } from "expo-font";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { COLORS } from "../theme";
+import { COLORS } from "../../theme";
 
 export default function RootLayout() {
   const [loaded] = useFonts({
