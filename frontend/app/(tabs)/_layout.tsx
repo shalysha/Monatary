@@ -1,6 +1,6 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { COLORS, FONTS } from "../../../theme";
+import { COLORS, FONTS } from "../../theme";
 import { Platform } from "react-native";
 
 export default function TabsLayout() {
